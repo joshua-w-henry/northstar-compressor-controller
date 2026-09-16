@@ -8,73 +8,57 @@
 #include <stdlib.h>
 #include <string.h>
 
-// ================================================================
-// NorthStar Compressor Controller - Phase 0 Hardware Rebuild
-// ================================================================
+// NorthStar compressor controller - compact Phase 0 field build
 
-// ---------------------- Pin map ----------------------
+// Pins
 const uint8_t PIN_PRESSURE_SWITCH = 2;
 const uint8_t PIN_MASTER_MONITOR  = 3;
 const uint8_t PIN_AUTO_SWITCH     = 4;
 const uint8_t PIN_RESET_BUTTON    = 5;
-
-const uint8_t PIN_BATT_SENSE      = A0;
-const uint8_t PIN_FORCE_UNLOAD    = A6;
-const uint8_t PIN_TANK_PRESSURE   = A7;
-
-// MOSFET outputs, active HIGH
 const uint8_t PIN_FAULT_MOSFET    = 6;
 const uint8_t PIN_MASTER_MOSFET   = 8;
 const uint8_t PIN_START_MOSFET    = 9;
-
-// Individual relay-module outputs, active LOW
-const uint8_t PIN_UNLOADER_RELAY  = A3;
+const uint8_t PIN_CAN_CS          = 10;
+const uint8_t PIN_BATT_SENSE      = A0;
 const uint8_t PIN_IDLE_RELAY      = A1;
 const uint8_t PIN_KILL_RELAY      = A2;
+const uint8_t PIN_UNLOADER_RELAY  = A3;
+const uint8_t PIN_FORCE_UNLOAD    = A6;
+const uint8_t PIN_TANK_PRESSURE   = A7;
 
-// CAN
-const uint8_t PIN_CAN_CS          = 10;
+const uint8_t RELAY_ON = LOW;
+const uint8_t RELAY_OFF = HIGH;
+void setRelay(uint8_t pin, bool on) { digitalWrite(pin, on ? RELAY_ON : RELAY_OFF); }
+void setMosfet(uint8_t pin, bool on) { digitalWrite(pin, on ? HIGH : LOW); }
 
-// ---------------------- Output helpers ----------------------
-const uint8_t RELAY_BOARD_ON  = LOW;
-const uint8_t RELAY_BOARD_OFF = HIGH;
-
-void setRelayBoard(uint8_t pin, bool on) {
-  digitalWrite(pin, on ? RELAY_BOARD_ON : RELAY_BOARD_OFF);
-}
-
-void setMosfet(uint8_t pin, bool on) {
-  digitalWrite(pin, on ? HIGH : LOW);
-}
-
-// ---------------------- Behavior switches ----------------------
+// Behavior
 const bool ENABLE_PRESSURE_AUTO_STOP = true;
 const bool ENABLE_CHARGE_VOLTAGE_RUN_FALLBACK = false;
 
-// ---------------------- Timing constants ----------------------
+// Timings
 const unsigned long PRESSURE_CALL_CONFIRM_MS = 1000;
 const unsigned long PRESSURE_FULL_CONFIRM_MS = 3000;
-const unsigned long MASTER_ON_DELAY_MS       = 4000;
-const unsigned long PRECRANK_UNLOAD_MS       = 1000;
-unsigned long startPulseMs                   = 750;
-const unsigned long START_TIMEOUT_MS         = 30000;
-const unsigned long OEM_RUN_UNLOADED_MS      = 15000;
-const unsigned long STOP_UNLOAD_MS           = 8000;
-const unsigned long MASTER_OFF_DELAY_AFTER_STOP_PULSE_MS = 6000;
-const unsigned long RPM_STALE_MS             = 1500;
-const unsigned long ENGINE_LOST_CONFIRM_MS   = 3000;
-const uint16_t ENGINE_RUNNING_RPM            = 400;
-const uint16_t MAX_ACCEPTED_RPM              = 4000;
-const uint16_t EMERGENCY_KILL_AVG_RPM        = 3500;
-const unsigned long RPM_AVG_SAMPLE_MS        = 500;
-const uint8_t RPM_AVG_SAMPLE_COUNT           = 20;
-const float ENGINE_RUNNING_CHARGE_VOLTAGE    = 13.2;
-const unsigned long CHARGE_RUN_CONFIRM_MS    = 2000;
-const unsigned long DISPLAY_UPDATE_MS        = 250;
-const unsigned long SERIAL_STATUS_MS         = 1000;
-const unsigned long FRAM_SAVE_MS             = 60000;
+const unsigned long MASTER_ON_DELAY_MS = 4000;
+const unsigned long PRECRANK_UNLOAD_MS = 1000;
+unsigned long startPulseMs = 750;
+const unsigned long START_TIMEOUT_MS = 30000;
+const unsigned long OEM_RUN_UNLOADED_MS = 15000;
+const unsigned long STOP_UNLOAD_MS = 8000;
+const unsigned long MASTER_OFF_DELAY_MS = 6000;
+const unsigned long RPM_STALE_MS = 1500;
+const unsigned long ENGINE_LOST_CONFIRM_MS = 3000;
+const uint16_t ENGINE_RUNNING_RPM = 400;
+const uint16_t MAX_ACCEPTED_RPM = 4000;
+const uint16_t EMERGENCY_KILL_AVG_RPM = 3500;
+const unsigned long RPM_AVG_SAMPLE_MS = 500;
+const uint8_t RPM_AVG_SAMPLE_COUNT = 20;
+const float ENGINE_RUNNING_CHARGE_VOLTAGE = 13.2;
+const unsigned long CHARGE_RUN_CONFIRM_MS = 2000;
+const unsigned long DISPLAY_UPDATE_MS = 250;
+const unsigned long SERIAL_STATUS_MS = 1000;
+const unsigned long FRAM_SAVE_MS = 60000;
 
-// ---------------------- Analog calibration ----------------------
+// Analog calibration
 const float ADC_REF_V = 5.0;
 const float BATT_DIVIDER_FACTOR = (100.0 + 33.0) / 33.0;
 const float BATT_CAL = 1.067;
@@ -83,46 +67,27 @@ const float PRESSURE_SENSOR_SPAN_V = 4.0;
 const float PRESSURE_SENSOR_MAX_PSI = 200.0;
 const float PRESSURE_ALPHA = 0.15;
 
-// ---------------------- CAN / OLED / FRAM ----------------------
+// Devices. 1-page OLED mode cuts the framebuffer RAM substantially.
 MCP2515 mcp2515(PIN_CAN_CS);
-U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+U8G2_SSD1306_128X32_UNIVISION_1_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 Adafruit_FRAM_I2C fram = Adafruit_FRAM_I2C();
 bool framPresent = false;
 const uint32_t FRAM_MAGIC = 0x4E535431UL;
-const uint16_t FRAM_ADDR_MAGIC   = 0;
-const uint16_t FRAM_ADDR_STARTS  = 4;
+const uint16_t FRAM_ADDR_MAGIC = 0;
+const uint16_t FRAM_ADDR_STARTS = 4;
 const uint16_t FRAM_ADDR_RUNTIME = 8;
 const uint32_t RPM_CAN_ID = 0x0C665500UL;
 
-// ---------------------- State machine ----------------------
 enum State {
-  STATE_WAITING = 0,
-  STATE_MASTER_ON_DELAY,
-  STATE_PRECRANK_UNLOAD,
-  STATE_STARTING,
-  STATE_OEM_RUN,
-  STATE_RUNNING_LOADED,
-  STATE_STOP_UNLOAD,
-  STATE_STOPPING,
-  STATE_FAULT
+  STATE_WAITING = 0, STATE_MASTER_ON_DELAY, STATE_PRECRANK_UNLOAD,
+  STATE_STARTING, STATE_OEM_RUN, STATE_RUNNING_LOADED,
+  STATE_STOP_UNLOAD, STATE_STOPPING, STATE_FAULT
 };
-
 enum FaultCode {
-  FAULT_NONE = 0,
-  FAULT_MASTER_OFF = 1,
-  FAULT_START_FAIL = 2,
-  FAULT_STOP_FAIL = 3,
-  FAULT_ENGINE_LOST = 4,
-  FAULT_OVERSPEED = 5
+  FAULT_NONE = 0, FAULT_MASTER_OFF = 1, FAULT_START_FAIL = 2,
+  FAULT_STOP_FAIL = 3, FAULT_ENGINE_LOST = 4, FAULT_OVERSPEED = 5
 };
-
-enum StopReason {
-  STOP_NONE = 0,
-  STOP_PRESSURE,
-  STOP_ENGINE_LOST,
-  STOP_FAULT,
-  RELEASE_AUTO
-};
+enum StopReason { STOP_NONE = 0, STOP_PRESSURE, STOP_ENGINE_LOST, STOP_FAULT, RELEASE_AUTO };
 
 State state = STATE_WAITING;
 FaultCode faultCode = FAULT_NONE;
@@ -132,7 +97,7 @@ unsigned long oemRunStartMs = 0;
 unsigned long stopPulseEndedMs = 0;
 bool emergencyKillActive = false;
 
-// ---------------------- Inputs / measurements ----------------------
+// Inputs / measurements
 bool autoOn = false;
 bool pressureCallRaw = false;
 bool pressureCallConfirmed = false;
@@ -143,13 +108,12 @@ bool resetPressed = false;
 unsigned long pressureCallStartedMs = 0;
 unsigned long pressureFullStartedMs = 0;
 float batteryVoltage = 0.0;
-float tankPressurePsi = 0.0;
 float tankPressureFiltered = 0.0;
 bool pressureFilterInitialized = false;
 unsigned long chargeRunStartedMs = 0;
 bool chargeRunConfirmed = false;
 
-// ---------------------- RPM / CAN ----------------------
+// RPM / CAN
 uint16_t engineRpm = 0;
 unsigned long lastRpmFrameMs = 0;
 uint32_t canAnyFrameCount = 0;
@@ -164,11 +128,11 @@ uint16_t avgRpm10s = 0;
 bool wasEngineRunning = false;
 unsigned long engineLostStartedMs = 0;
 
-// ---------------------- Automatic Start/Stop pulse ----------------------
+// Automatic pulse
 bool startStopPulseActive = false;
 unsigned long startStopPulseStartedMs = 0;
 
-// ---------------------- Field console manual overrides ----------------------
+// Field manual overrides
 bool fieldManualMode = false;
 bool manualMasterOn = false;
 bool manualStartStopOn = false;
@@ -180,10 +144,10 @@ bool actualStartStopOn = false;
 bool actualUnloaderOn = false;
 bool actualIdleOn = false;
 bool actualKillOn = false;
-char serialCommandBuffer[64];
+char serialCommandBuffer[40];
 uint8_t serialCommandLength = 0;
 
-// ---------------------- Counters ----------------------
+// Counters
 uint32_t startCount = 0;
 uint32_t runtimeSeconds = 0;
 unsigned long lastRuntimeTickMs = 0;
@@ -218,33 +182,18 @@ const char* faultName(FaultCode f) {
   }
 }
 
-const char* stopReasonName(StopReason r) {
-  switch (r) {
-    case STOP_NONE: return "NONE";
-    case STOP_PRESSURE: return "PRES";
-    case STOP_ENGINE_LOST: return "LOST";
-    case STOP_FAULT: return "FAULT";
-    case RELEASE_AUTO: return "AUTO";
-    default: return "UNK";
-  }
-}
-
 bool engineRunningByRpm() {
-  return (engineRpm >= ENGINE_RUNNING_RPM) && ((millis() - lastRpmFrameMs) <= RPM_STALE_MS);
+  return engineRpm >= ENGINE_RUNNING_RPM && (millis() - lastRpmFrameMs) <= RPM_STALE_MS;
 }
-
 bool engineRunningByChargingVoltage() {
   return ENABLE_CHARGE_VOLTAGE_RUN_FALLBACK && chargeRunConfirmed;
 }
-
-bool engineRunning() {
-  return engineRunningByRpm() || engineRunningByChargingVoltage();
-}
+bool engineRunning() { return engineRunningByRpm() || engineRunningByChargingVoltage(); }
 
 void updateChargeRunConfirm() {
   unsigned long now = millis();
   if (batteryVoltage >= ENGINE_RUNNING_CHARGE_VOLTAGE) {
-    if (chargeRunStartedMs == 0) chargeRunStartedMs = now;
+    if (!chargeRunStartedMs) chargeRunStartedMs = now;
     chargeRunConfirmed = (now - chargeRunStartedMs >= CHARGE_RUN_CONFIRM_MS);
   } else {
     chargeRunStartedMs = 0;
@@ -252,12 +201,12 @@ void updateChargeRunConfirm() {
   }
 }
 
-void enterState(State newState) {
-  if (state != newState) {
-    Serial.print(F("EVENT: ENTER "));
-    Serial.println(stateName(newState));
+void enterState(State s) {
+  if (state != s) {
+    Serial.print(F("EV ENTER "));
+    Serial.println(stateName(s));
   }
-  state = newState;
+  state = s;
   stateEnteredMs = millis();
 }
 
@@ -265,7 +214,7 @@ void setFault(FaultCode f) {
   faultCode = f;
   stopReason = STOP_FAULT;
   if (f == FAULT_OVERSPEED) emergencyKillActive = true;
-  Serial.print(F("EVENT: FAULT "));
+  Serial.print(F("EV FAULT "));
   Serial.println(faultName(f));
   enterState(STATE_FAULT);
 }
@@ -273,45 +222,29 @@ void setFault(FaultCode f) {
 void beginStartStopPulse() {
   startStopPulseActive = true;
   startStopPulseStartedMs = millis();
-  Serial.print(F("EVENT: START/STOP PULSE "));
-  Serial.print(startPulseMs);
-  Serial.println(F(" ms"));
+  Serial.print(F("EV PULSE "));
+  Serial.println(startPulseMs);
 }
-
 void updateStartStopPulse() {
-  if (startStopPulseActive && (millis() - startStopPulseStartedMs >= startPulseMs)) {
+  if (startStopPulseActive && millis() - startStopPulseStartedMs >= startPulseMs) {
     startStopPulseActive = false;
     stopPulseEndedMs = millis();
-    Serial.println(F("EVENT: START/STOP PULSE END"));
+    Serial.println(F("EV PULSE END"));
   }
 }
 
-uint32_t framReadU32(uint16_t addr) {
+uint32_t framReadU32(uint16_t a) {
   uint32_t v = 0;
-  v |= ((uint32_t)fram.read(addr + 0)) << 0;
-  v |= ((uint32_t)fram.read(addr + 1)) << 8;
-  v |= ((uint32_t)fram.read(addr + 2)) << 16;
-  v |= ((uint32_t)fram.read(addr + 3)) << 24;
+  for (uint8_t i = 0; i < 4; i++) v |= ((uint32_t)fram.read(a + i)) << (8 * i);
   return v;
 }
-
-void framWriteU32(uint16_t addr, uint32_t v) {
-  fram.write(addr + 0, (uint8_t)((v >> 0) & 0xFF));
-  fram.write(addr + 1, (uint8_t)((v >> 8) & 0xFF));
-  fram.write(addr + 2, (uint8_t)((v >> 16) & 0xFF));
-  fram.write(addr + 3, (uint8_t)((v >> 24) & 0xFF));
+void framWriteU32(uint16_t a, uint32_t v) {
+  for (uint8_t i = 0; i < 4; i++) fram.write(a + i, (uint8_t)(v >> (8 * i)));
 }
-
 void loadFram() {
   framPresent = fram.begin(0x50);
-  if (!framPresent) {
-    Serial.println(F("FRAM: not found"));
-    return;
-  }
-  Serial.println(F("FRAM: found"));
-  uint32_t magic = framReadU32(FRAM_ADDR_MAGIC);
-  if (magic != FRAM_MAGIC) {
-    Serial.println(F("FRAM: init"));
+  if (!framPresent) return;
+  if (framReadU32(FRAM_ADDR_MAGIC) != FRAM_MAGIC) {
     framWriteU32(FRAM_ADDR_MAGIC, FRAM_MAGIC);
     framWriteU32(FRAM_ADDR_STARTS, 0);
     framWriteU32(FRAM_ADDR_RUNTIME, 0);
@@ -319,42 +252,36 @@ void loadFram() {
   startCount = framReadU32(FRAM_ADDR_STARTS);
   runtimeSeconds = framReadU32(FRAM_ADDR_RUNTIME);
 }
-
 void saveFram() {
   if (!framPresent) return;
   framWriteU32(FRAM_ADDR_STARTS, startCount);
   framWriteU32(FRAM_ADDR_RUNTIME, runtimeSeconds);
 }
 
-uint16_t analogReadAveraged(uint8_t pin, uint8_t samples = 16) {
+uint16_t analogReadAveraged(uint8_t pin) {
   uint32_t sum = 0;
-  for (uint8_t i = 0; i < samples; i++) {
-    sum += analogRead(pin);
-    delayMicroseconds(250);
-  }
-  return (uint16_t)(sum / samples);
+  for (uint8_t i = 0; i < 16; i++) { sum += analogRead(pin); delayMicroseconds(250); }
+  return (uint16_t)(sum >> 4);
 }
 
 void readInputs() {
   unsigned long now = millis();
-  pressureCallRaw = (digitalRead(PIN_PRESSURE_SWITCH) == LOW);
-  autoOn = (digitalRead(PIN_AUTO_SWITCH) == LOW);
-  masterMonitorOn = (digitalRead(PIN_MASTER_MONITOR) == LOW);
-  resetPressed = (digitalRead(PIN_RESET_BUTTON) == LOW);
-  int forceRaw = analogRead(PIN_FORCE_UNLOAD);
-  forceUnload = (forceRaw < 600);
+  pressureCallRaw = digitalRead(PIN_PRESSURE_SWITCH) == LOW;
+  autoOn = digitalRead(PIN_AUTO_SWITCH) == LOW;
+  masterMonitorOn = digitalRead(PIN_MASTER_MONITOR) == LOW;
+  resetPressed = digitalRead(PIN_RESET_BUTTON) == LOW;
+  forceUnload = analogRead(PIN_FORCE_UNLOAD) < 600;
 
   if (pressureCallRaw) {
-    if (pressureCallStartedMs == 0) pressureCallStartedMs = now;
-    pressureCallConfirmed = (now - pressureCallStartedMs >= PRESSURE_CALL_CONFIRM_MS);
+    if (!pressureCallStartedMs) pressureCallStartedMs = now;
+    pressureCallConfirmed = now - pressureCallStartedMs >= PRESSURE_CALL_CONFIRM_MS;
   } else {
     pressureCallStartedMs = 0;
     pressureCallConfirmed = false;
   }
-
   if (!pressureCallRaw) {
-    if (pressureFullStartedMs == 0) pressureFullStartedMs = now;
-    pressureFullConfirmed = (now - pressureFullStartedMs >= PRESSURE_FULL_CONFIRM_MS);
+    if (!pressureFullStartedMs) pressureFullStartedMs = now;
+    pressureFullConfirmed = now - pressureFullStartedMs >= PRESSURE_FULL_CONFIRM_MS;
   } else {
     pressureFullStartedMs = 0;
     pressureFullConfirmed = false;
@@ -363,46 +290,37 @@ void readInputs() {
 
 void readBatteryVoltage() {
   uint16_t raw = analogReadAveraged(PIN_BATT_SENSE);
-  float adcV = ((float)raw / 1023.0) * ADC_REF_V;
-  batteryVoltage = adcV * BATT_DIVIDER_FACTOR * BATT_CAL;
+  batteryVoltage = ((float)raw / 1023.0) * ADC_REF_V * BATT_DIVIDER_FACTOR * BATT_CAL;
 }
-
 void readTankPressure() {
   uint16_t raw = analogReadAveraged(PIN_TANK_PRESSURE);
-  float voltage = ((float)raw / 1023.0) * ADC_REF_V;
-  float psi = (voltage - PRESSURE_SENSOR_MIN_V) * (PRESSURE_SENSOR_MAX_PSI / PRESSURE_SENSOR_SPAN_V);
-  if (psi < 0.0) psi = 0.0;
+  float v = ((float)raw / 1023.0) * ADC_REF_V;
+  float psi = (v - PRESSURE_SENSOR_MIN_V) * (PRESSURE_SENSOR_MAX_PSI / PRESSURE_SENSOR_SPAN_V);
+  if (psi < 0) psi = 0;
   if (psi > PRESSURE_SENSOR_MAX_PSI) psi = PRESSURE_SENSOR_MAX_PSI;
-  tankPressurePsi = psi;
-  if (!pressureFilterInitialized) {
-    tankPressureFiltered = psi;
-    pressureFilterInitialized = true;
-  } else {
-    tankPressureFiltered = (PRESSURE_ALPHA * psi) + ((1.0 - PRESSURE_ALPHA) * tankPressureFiltered);
-  }
+  if (!pressureFilterInitialized) { tankPressureFiltered = psi; pressureFilterInitialized = true; }
+  else tankPressureFiltered = PRESSURE_ALPHA * psi + (1.0 - PRESSURE_ALPHA) * tankPressureFiltered;
 }
 
 void readCanRpm() {
   struct can_frame frame;
   while (mcp2515.readMessage(&frame) == MCP2515::ERROR_OK) {
     canAnyFrameCount++;
-    bool extended = (frame.can_id & CAN_EFF_FLAG);
-    uint32_t cleanId = extended ? (frame.can_id & CAN_EFF_MASK) : (frame.can_id & CAN_SFF_MASK);
-    if (extended && cleanId == RPM_CAN_ID && frame.can_dlc >= 4) {
-      uint16_t candidateRpm = ((uint16_t)frame.data[2] << 8) | frame.data[3];
-      if (candidateRpm <= MAX_ACCEPTED_RPM) {
-        engineRpm = candidateRpm;
+    bool ext = frame.can_id & CAN_EFF_FLAG;
+    uint32_t id = ext ? frame.can_id & CAN_EFF_MASK : frame.can_id & CAN_SFF_MASK;
+    if (ext && id == RPM_CAN_ID && frame.can_dlc >= 4) {
+      uint16_t r = ((uint16_t)frame.data[2] << 8) | frame.data[3];
+      if (r <= MAX_ACCEPTED_RPM) {
+        engineRpm = r;
         lastRpmFrameMs = millis();
         canRpmFrameCount++;
       } else {
         canRejectedRpmCount++;
-        lastRejectedRpm = candidateRpm;
-        Serial.print(F("EVENT: RPM REJECT "));
-        Serial.println(candidateRpm);
+        lastRejectedRpm = r;
       }
     }
   }
-  if ((millis() - lastRpmFrameMs) > RPM_STALE_MS) engineRpm = 0;
+  if (millis() - lastRpmFrameMs > RPM_STALE_MS) engineRpm = 0;
 }
 
 void updateRpmAverage() {
@@ -415,17 +333,13 @@ void updateRpmAverage() {
   uint32_t sum = 0;
   for (uint8_t i = 0; i < rpmSampleFilled; i++) sum += rpmSamples[i];
   avgRpm10s = rpmSampleFilled ? (uint16_t)(sum / rpmSampleFilled) : 0;
-  if (rpmSampleFilled >= RPM_AVG_SAMPLE_COUNT && avgRpm10s >= EMERGENCY_KILL_AVG_RPM && faultCode != FAULT_OVERSPEED) {
+  if (rpmSampleFilled >= RPM_AVG_SAMPLE_COUNT && avgRpm10s >= EMERGENCY_KILL_AVG_RPM && faultCode != FAULT_OVERSPEED)
     setFault(FAULT_OVERSPEED);
-  }
 }
 
 void updateRuntimeCounter() {
   unsigned long now = millis();
-  if (lastRuntimeTickMs == 0) {
-    lastRuntimeTickMs = now;
-    return;
-  }
+  if (!lastRuntimeTickMs) { lastRuntimeTickMs = now; return; }
   if (now - lastRuntimeTickMs >= 1000) {
     lastRuntimeTickMs += 1000;
     if (engineRunning()) runtimeSeconds++;
@@ -438,21 +352,13 @@ void updateRuntimeCounter() {
 
 bool faultBlinkOutputOn() {
   if (faultCode == FAULT_NONE) return false;
-  const unsigned long onMs = 250;
-  const unsigned long offMs = 250;
-  const unsigned long pauseMs = 1500;
-  uint8_t count = (uint8_t)faultCode;
-  unsigned long patternMs = (count * (onMs + offMs)) + pauseMs;
-  unsigned long t = millis() % patternMs;
-  for (uint8_t i = 0; i < count; i++) {
-    unsigned long start = i * (onMs + offMs);
-    if (t >= start && t < start + onMs) return true;
-  }
+  uint8_t n = (uint8_t)faultCode;
+  unsigned long t = millis() % (n * 500UL + 1500UL);
+  for (uint8_t i = 0; i < n; i++) if (t >= i * 500UL && t < i * 500UL + 250UL) return true;
   return false;
 }
 
 void releaseControlForAutoOff() {
-  if (state != STATE_WAITING) Serial.println(F("EVENT: AUTO OFF RELEASE"));
   stopReason = RELEASE_AUTO;
   startStopPulseActive = false;
   if (state != STATE_FAULT) enterState(STATE_WAITING);
@@ -463,76 +369,44 @@ void updateStateMachine() {
   bool running = engineRunning();
 
   if (resetPressed) {
-    if (faultCode != FAULT_NONE) Serial.println(F("EVENT: FAULT CLEAR"));
     faultCode = FAULT_NONE;
     emergencyKillActive = false;
     stopReason = STOP_NONE;
     if (state == STATE_FAULT) enterState(STATE_WAITING);
   }
+  if (!autoOn) { releaseControlForAutoOff(); return; }
 
-  if (!autoOn) {
-    releaseControlForAutoOff();
-    return;
-  }
-
-  bool shouldBeRunning = (state == STATE_OEM_RUN || state == STATE_RUNNING_LOADED || state == STATE_STOP_UNLOAD || state == STATE_STOPPING);
-  if (shouldBeRunning) {
+  bool shouldRun = state == STATE_OEM_RUN || state == STATE_RUNNING_LOADED || state == STATE_STOP_UNLOAD || state == STATE_STOPPING;
+  if (shouldRun) {
     if (!running && wasEngineRunning) {
-      if (engineLostStartedMs == 0) engineLostStartedMs = now;
+      if (!engineLostStartedMs) engineLostStartedMs = now;
       if (now - engineLostStartedMs >= ENGINE_LOST_CONFIRM_MS) {
         stopReason = STOP_ENGINE_LOST;
         setFault(FAULT_ENGINE_LOST);
         return;
       }
-    } else {
-      engineLostStartedMs = 0;
-    }
-  } else {
-    engineLostStartedMs = 0;
-  }
-
+    } else engineLostStartedMs = 0;
+  } else engineLostStartedMs = 0;
   wasEngineRunning = running;
   if (state == STATE_FAULT) return;
 
   switch (state) {
     case STATE_WAITING:
       stopReason = STOP_NONE;
-      if (running) {
-        Serial.println(F("EVENT: ADOPT RUNNING ENGINE"));
-        oemRunStartMs = now;
-        enterState(STATE_OEM_RUN);
-        break;
-      }
-      if (pressureCallConfirmed && !forceUnload) {
-        Serial.println(F("EVENT: PRESSURE CALL CONFIRMED"));
-        enterState(STATE_MASTER_ON_DELAY);
-      }
+      if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
+      if (pressureCallConfirmed && !forceUnload) enterState(STATE_MASTER_ON_DELAY);
       break;
 
     case STATE_MASTER_ON_DELAY:
-      if (running) {
-        Serial.println(F("EVENT: ADOPT RUNNING ENGINE"));
-        oemRunStartMs = now;
-        enterState(STATE_OEM_RUN);
-        break;
-      }
+      if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
       if (now - stateEnteredMs >= MASTER_ON_DELAY_MS) {
-        if (!masterMonitorOn) {
-          setFault(FAULT_MASTER_OFF);
-          return;
-        }
-        Serial.println(F("EVENT: MASTER CONFIRMED"));
+        if (!masterMonitorOn) { setFault(FAULT_MASTER_OFF); return; }
         enterState(STATE_PRECRANK_UNLOAD);
       }
       break;
 
     case STATE_PRECRANK_UNLOAD:
-      if (running) {
-        Serial.println(F("EVENT: START PULSE INHIBITED - ENGINE RUNNING"));
-        oemRunStartMs = now;
-        enterState(STATE_OEM_RUN);
-        break;
-      }
+      if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
       if (now - stateEnteredMs >= PRECRANK_UNLOAD_MS) {
         beginStartStopPulse();
         startCount++;
@@ -542,158 +416,78 @@ void updateStateMachine() {
       break;
 
     case STATE_STARTING:
-      if (running) {
-        Serial.println(F("EVENT: ENGINE RUNNING"));
-        oemRunStartMs = now;
-        enterState(STATE_OEM_RUN);
-      } else if (now - stateEnteredMs >= START_TIMEOUT_MS) {
-        setFault(FAULT_START_FAIL);
-      }
+      if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); }
+      else if (now - stateEnteredMs >= START_TIMEOUT_MS) setFault(FAULT_START_FAIL);
       break;
 
     case STATE_OEM_RUN:
-      if (now - oemRunStartMs >= OEM_RUN_UNLOADED_MS) {
-        Serial.println(F("EVENT: LOAD COMPRESSOR"));
-        enterState(STATE_RUNNING_LOADED);
-      }
+      if (now - oemRunStartMs >= OEM_RUN_UNLOADED_MS) enterState(STATE_RUNNING_LOADED);
       break;
 
     case STATE_RUNNING_LOADED:
       if (ENABLE_PRESSURE_AUTO_STOP && pressureFullConfirmed) {
-        Serial.println(F("EVENT: PRESSURE FULL CONFIRMED"));
         stopReason = STOP_PRESSURE;
         enterState(STATE_STOP_UNLOAD);
       }
       break;
 
     case STATE_STOP_UNLOAD:
-      if (!running) {
-        enterState(STATE_WAITING);
-      } else if (now - stateEnteredMs >= STOP_UNLOAD_MS) {
+      if (!running) enterState(STATE_WAITING);
+      else if (now - stateEnteredMs >= STOP_UNLOAD_MS) {
         beginStartStopPulse();
         enterState(STATE_STOPPING);
       }
       break;
 
     case STATE_STOPPING:
-      if (!startStopPulseActive && (now - stopPulseEndedMs >= MASTER_OFF_DELAY_AFTER_STOP_PULSE_MS)) {
-        Serial.println(F("EVENT: MASTER OFF AFTER STOP"));
-        enterState(STATE_WAITING);
-      }
+      if (!startStopPulseActive && now - stopPulseEndedMs >= MASTER_OFF_DELAY_MS) enterState(STATE_WAITING);
       break;
 
-    case STATE_FAULT:
-    default:
-      break;
+    case STATE_FAULT: default: break;
   }
 }
 
-void writeCommandedOutputs(bool masterOn, bool startStopOn, bool unloaderOn, bool idleOn, bool killOn) {
-  actualMasterOn = masterOn;
-  actualStartStopOn = startStopOn;
-  actualUnloaderOn = unloaderOn;
-  actualIdleOn = idleOn;
-  actualKillOn = killOn;
-  setMosfet(PIN_MASTER_MOSFET, masterOn);
-  setMosfet(PIN_START_MOSFET, startStopOn);
-  setRelayBoard(PIN_UNLOADER_RELAY, unloaderOn);
-  setRelayBoard(PIN_IDLE_RELAY, idleOn);
-  setRelayBoard(PIN_KILL_RELAY, killOn);
+void writeOutputs(bool master, bool startStop, bool unload, bool idle, bool kill) {
+  actualMasterOn = master;
+  actualStartStopOn = startStop;
+  actualUnloaderOn = unload;
+  actualIdleOn = idle;
+  actualKillOn = kill;
+  setMosfet(PIN_MASTER_MOSFET, master);
+  setMosfet(PIN_START_MOSFET, startStop);
+  setRelay(PIN_UNLOADER_RELAY, unload);
+  setRelay(PIN_IDLE_RELAY, idle);
+  setRelay(PIN_KILL_RELAY, kill);
 }
 
 void applyOutputs() {
   setMosfet(PIN_FAULT_MOSFET, faultBlinkOutputOn());
 
   if (fieldManualMode) {
-    bool manualUnloadCommand = manualUnloaderOn;
-    bool manualKillCommand = manualKillOn;
-    if (emergencyKillActive) {
-      manualUnloadCommand = true;
-      manualKillCommand = true;
-    }
-    writeCommandedOutputs(manualMasterOn, manualStartStopOn, manualUnloadCommand, manualIdleOn, manualKillCommand);
+    writeOutputs(manualMasterOn, manualStartStopOn,
+                 manualUnloaderOn || emergencyKillActive,
+                 manualIdleOn,
+                 manualKillOn || emergencyKillActive);
     return;
   }
 
   bool running = engineRunning();
-  bool masterOn = false;
-  bool startStopOn = startStopPulseActive;
-  bool unloaderOn = false;
-  bool idleOn = false;
-  bool killOn = false;
-
-  if (!autoOn) {
-    unloaderOn = forceUnload;
-    writeCommandedOutputs(false, false, unloaderOn, false, false);
-    return;
-  }
+  bool master = false, unload = false, idle = false, kill = false;
+  if (!autoOn) { writeOutputs(false, false, forceUnload, false, false); return; }
 
   switch (state) {
-    case STATE_WAITING:
-      unloaderOn = forceUnload;
-      break;
-    case STATE_MASTER_ON_DELAY:
-      masterOn = true;
-      unloaderOn = forceUnload;
-      break;
+    case STATE_MASTER_ON_DELAY: master = true; unload = forceUnload; break;
     case STATE_PRECRANK_UNLOAD:
     case STATE_STARTING:
-    case STATE_OEM_RUN:
-      masterOn = true;
-      unloaderOn = true;
-      break;
-    case STATE_RUNNING_LOADED:
-      masterOn = true;
-      unloaderOn = forceUnload;
-      break;
+    case STATE_OEM_RUN: master = true; unload = true; break;
+    case STATE_RUNNING_LOADED: master = true; unload = forceUnload; break;
     case STATE_STOP_UNLOAD:
-    case STATE_STOPPING:
-      masterOn = true;
-      unloaderOn = true;
-      break;
-    case STATE_FAULT:
-      masterOn = running && !emergencyKillActive;
-      unloaderOn = running || forceUnload;
-      break;
+    case STATE_STOPPING: master = true; unload = true; break;
+    case STATE_FAULT: master = running && !emergencyKillActive; unload = running || forceUnload; break;
+    default: unload = forceUnload; break;
   }
-
-  if (emergencyKillActive) {
-    killOn = true;
-    unloaderOn = true;
-  }
-
-  writeCommandedOutputs(masterOn, startStopOn, unloaderOn, idleOn, killOn);
-}
-
-void printFieldHelp() {
-  Serial.println(F("COMMANDS: status | help | auto | release | alloff"));
-  Serial.println(F("          master on/off | start on/off | startstop on/off | start/stop on/off"));
-  Serial.println(F("          unload on/off | idle on/off | kill on/off"));
-  Serial.println(F("          set start latch time XXXX   (milliseconds, 50-10000)"));
-  Serial.println(F("NOTE: any direct output command enters FIELD MANUAL mode."));
-}
-
-void printHumanStatus() {
-  Serial.print(F("STATUS mode="));
-  Serial.print(fieldManualMode ? F("FIELD-MANUAL") : F("AUTO-LOGIC"));
-  Serial.print(F(" state=")); Serial.print(stateName(state));
-  Serial.print(F(" autoSwitch=")); Serial.print(autoOn ? F("ON") : F("OFF"));
-  Serial.print(F(" run=")); Serial.print(engineRunning() ? F("YES") : F("NO"));
-  Serial.print(F(" rpm=")); Serial.print(engineRpm);
-  Serial.print(F(" psi=")); Serial.print(tankPressureFiltered, 1);
-  Serial.print(F(" batt=")); Serial.print(batteryVoltage, 2);
-  Serial.print(F(" pressure=")); Serial.print(pressureCallRaw ? F("CALL") : F("FULL"));
-  Serial.print(F(" masterMon=")); Serial.print(masterMonitorOn ? F("ON") : F("OFF"));
-  Serial.print(F(" forceUnload=")); Serial.print(forceUnload ? F("YES") : F("NO"));
-  Serial.print(F(" | OUT master=")); Serial.print(actualMasterOn ? F("ON") : F("OFF"));
-  Serial.print(F(" startStop=")); Serial.print(actualStartStopOn ? F("ON") : F("OFF"));
-  Serial.print(F(" unload=")); Serial.print(actualUnloaderOn ? F("ON") : F("OFF"));
-  Serial.print(F(" idle=")); Serial.print(actualIdleOn ? F("ON") : F("OFF"));
-  Serial.print(F(" kill=")); Serial.print(actualKillOn ? F("ON") : F("OFF"));
-  Serial.print(F(" | pulse=")); Serial.print(startPulseMs); Serial.print(F("ms"));
-  Serial.print(F(" fault=")); Serial.print(faultName(faultCode));
-  Serial.print(F(" hobbs=")); Serial.print(runtimeSeconds / 3600.0, 2);
-  Serial.print(F(" cycles=")); Serial.println(startCount);
+  if (emergencyKillActive) { kill = true; unload = true; }
+  writeOutputs(master, startStopPulseActive, unload, idle, kill);
 }
 
 void enterFieldManualMode() {
@@ -701,184 +495,147 @@ void enterFieldManualMode() {
     fieldManualMode = true;
     startStopPulseActive = false;
     enterState(STATE_WAITING);
-    Serial.println(F("FIELD: MANUAL OUTPUT CONTROL ENABLED"));
+    Serial.println(F("MANUAL"));
   }
 }
 
-bool parseOnOff(const char* value, bool &result) {
-  if (strcmp(value, "on") == 0) {
-    result = true;
-    return true;
-  }
-  if (strcmp(value, "off") == 0) {
-    result = false;
-    return true;
-  }
-  return false;
+void printStatus() {
+  Serial.print(F("STATUS mode=")); Serial.print(fieldManualMode ? F("MAN") : F("AUTO"));
+  Serial.print(F(" state=")); Serial.print(stateName(state));
+  Serial.print(F(" sw=")); Serial.print(autoOn ? F("ON") : F("OFF"));
+  Serial.print(F(" run=")); Serial.print(engineRunning() ? F("Y") : F("N"));
+  Serial.print(F(" rpm=")); Serial.print(engineRpm);
+  Serial.print(F(" psi=")); Serial.print(tankPressureFiltered, 1);
+  Serial.print(F(" V=")); Serial.print(batteryVoltage, 2);
+  Serial.print(F(" p=")); Serial.print(pressureCallRaw ? F("CALL") : F("FULL"));
+  Serial.print(F(" mon=")); Serial.print(masterMonitorOn ? F("ON") : F("OFF"));
+  Serial.print(F(" | M=")); Serial.print(actualMasterOn);
+  Serial.print(F(" S=")); Serial.print(actualStartStopOn);
+  Serial.print(F(" U=")); Serial.print(actualUnloaderOn);
+  Serial.print(F(" I=")); Serial.print(actualIdleOn);
+  Serial.print(F(" K=")); Serial.print(actualKillOn);
+  Serial.print(F(" pulse=")); Serial.print(startPulseMs);
+  Serial.print(F(" fault=")); Serial.print(faultName(faultCode));
+  Serial.print(F(" hrs=")); Serial.print(runtimeSeconds / 3600.0, 2);
+  Serial.print(F(" cyc=")); Serial.println(startCount);
 }
 
-void handleSerialCommand(char* command) {
-  for (char* p = command; *p; ++p) *p = (char)tolower(*p);
-  while (*command == ' ') command++;
-  if (*command == '\0') return;
+void setManualOutput(char which, bool on) {
+  enterFieldManualMode();
+  switch (which) {
+    case 'm': manualMasterOn = on; break;
+    case 's': manualStartStopOn = on; break;
+    case 'u': manualUnloaderOn = on; break;
+    case 'i': manualIdleOn = on; break;
+    case 'k': manualKillOn = on; break;
+  }
+  Serial.println(F("OK"));
+}
 
-  if (strcmp(command, "help") == 0 || strcmp(command, "?") == 0) {
-    printFieldHelp();
+void handleSerialCommand(char* c) {
+  for (char* p = c; *p; ++p) *p = (char)tolower(*p);
+  while (*c == ' ') c++;
+  if (!*c) return;
+
+  if (!strcmp(c, "status")) { printStatus(); return; }
+  if (!strcmp(c, "help") || !strcmp(c, "?")) {
+    Serial.println(F("master/start/unload/idle/kill on|off; set start latch time N; auto; alloff; status"));
     return;
   }
-  if (strcmp(command, "status") == 0) {
-    printHumanStatus();
-    return;
-  }
-  if (strcmp(command, "auto") == 0 || strcmp(command, "release") == 0) {
+  if (!strcmp(c, "auto") || !strcmp(c, "release")) {
     fieldManualMode = false;
-    manualMasterOn = false;
-    manualStartStopOn = false;
-    manualUnloaderOn = false;
-    manualIdleOn = false;
-    manualKillOn = false;
+    manualMasterOn = manualStartStopOn = manualUnloaderOn = manualIdleOn = manualKillOn = false;
     startStopPulseActive = false;
     enterState(STATE_WAITING);
-    Serial.println(F("FIELD: RELEASED TO AUTOMATIC LOGIC"));
+    Serial.println(F("AUTO"));
     return;
   }
-  if (strcmp(command, "alloff") == 0 || strcmp(command, "all off") == 0) {
+  if (!strcmp(c, "alloff") || !strcmp(c, "all off")) {
     enterFieldManualMode();
-    manualMasterOn = false;
-    manualStartStopOn = false;
-    manualUnloaderOn = false;
-    manualIdleOn = false;
-    manualKillOn = false;
-    Serial.println(F("FIELD: ALL MANUAL OUTPUTS OFF"));
+    manualMasterOn = manualStartStopOn = manualUnloaderOn = manualIdleOn = manualKillOn = false;
+    Serial.println(F("OK"));
     return;
   }
 
-  const char* prefix = "set start latch time ";
-  if (strncmp(command, prefix, strlen(prefix)) == 0) {
-    unsigned long requested = strtoul(command + strlen(prefix), NULL, 10);
-    if (requested < 50 || requested > 10000) {
-      Serial.println(F("ERR: start latch time must be 50-10000 ms"));
-    } else {
-      startPulseMs = requested;
-      Serial.print(F("OK: automatic start/stop pulse = "));
-      Serial.print(startPulseMs);
-      Serial.println(F(" ms"));
-    }
+  const char* setp = "set start latch time ";
+  if (!strncmp(c, setp, 21)) {
+    unsigned long n = strtoul(c + 21, NULL, 10);
+    if (n >= 50 && n <= 10000) { startPulseMs = n; Serial.println(F("OK")); }
+    else Serial.println(F("ERR 50-10000"));
     return;
   }
 
-  struct CommandMap {
-    const char* prefix;
-    bool* target;
-    const __FlashStringHelper* label;
-  };
+  bool on;
+  char which = 0;
+  char* arg = NULL;
+  if (!strncmp(c, "master ", 7)) { which = 'm'; arg = c + 7; }
+  else if (!strncmp(c, "start/stop ", 11)) { which = 's'; arg = c + 11; }
+  else if (!strncmp(c, "startstop ", 10)) { which = 's'; arg = c + 10; }
+  else if (!strncmp(c, "start ", 6)) { which = 's'; arg = c + 6; }
+  else if (!strncmp(c, "unload ", 7)) { which = 'u'; arg = c + 7; }
+  else if (!strncmp(c, "idle ", 5)) { which = 'i'; arg = c + 5; }
+  else if (!strncmp(c, "kill ", 5)) { which = 'k'; arg = c + 5; }
 
-  CommandMap commands[] = {
-    {"master ", &manualMasterOn, F("MASTER")},
-    {"start ", &manualStartStopOn, F("START/STOP")},
-    {"startstop ", &manualStartStopOn, F("START/STOP")},
-    {"start/stop ", &manualStartStopOn, F("START/STOP")},
-    {"unload ", &manualUnloaderOn, F("UNLOAD")},
-    {"idle ", &manualIdleOn, F("IDLE")},
-    {"kill ", &manualKillOn, F("KILL")}
-  };
-
-  for (uint8_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
-    size_t n = strlen(commands[i].prefix);
-    if (strncmp(command, commands[i].prefix, n) == 0) {
-      bool value;
-      if (!parseOnOff(command + n, value)) {
-        Serial.println(F("ERR: use on or off"));
-        return;
-      }
-      enterFieldManualMode();
-      *(commands[i].target) = value;
-      Serial.print(F("FIELD: "));
-      Serial.print(commands[i].label);
-      Serial.println(value ? F(" ON") : F(" OFF"));
-      return;
-    }
+  if (which) {
+    if (!strcmp(arg, "on")) on = true;
+    else if (!strcmp(arg, "off")) on = false;
+    else { Serial.println(F("ERR on/off")); return; }
+    setManualOutput(which, on);
+    return;
   }
-
-  Serial.print(F("ERR: unknown command: "));
-  Serial.println(command);
-  Serial.println(F("Type 'help' for commands."));
+  Serial.println(F("ERR"));
 }
 
 void processSerialConsole() {
-  while (Serial.available() > 0) {
+  while (Serial.available()) {
     char c = (char)Serial.read();
     if (c == '\r') continue;
     if (c == '\n') {
-      serialCommandBuffer[serialCommandLength] = '\0';
+      serialCommandBuffer[serialCommandLength] = 0;
       handleSerialCommand(serialCommandBuffer);
       serialCommandLength = 0;
-      continue;
-    }
-    if (serialCommandLength < sizeof(serialCommandBuffer) - 1) {
+    } else if (serialCommandLength < sizeof(serialCommandBuffer) - 1) {
       serialCommandBuffer[serialCommandLength++] = c;
-    } else {
-      serialCommandLength = 0;
-      Serial.println(F("ERR: command too long"));
-    }
+    } else serialCommandLength = 0;
   }
+}
+
+void drawDisplayPage() {
+  char line[24];
+  char batt[7];
+  u8g2.setFont(u8g2_font_5x8_tf);
+
+  if (fieldManualMode) snprintf(line, sizeof(line), "MANUAL H:%lu.%lu", (unsigned long)(runtimeSeconds / 3600UL), (unsigned long)((runtimeSeconds / 360UL) % 10UL));
+  else if (faultCode != FAULT_NONE) snprintf(line, sizeof(line), "FLT:%s H:%lu.%lu", faultName(faultCode), (unsigned long)(runtimeSeconds / 3600UL), (unsigned long)((runtimeSeconds / 360UL) % 10UL));
+  else snprintf(line, sizeof(line), "%s A:%s H:%lu.%lu", stateName(state), autoOn ? "ON" : "OFF", (unsigned long)(runtimeSeconds / 3600UL), (unsigned long)((runtimeSeconds / 360UL) % 10UL));
+  u8g2.drawStr(0, 8, line);
+
+  if (engineRunningByRpm()) snprintf(line, sizeof(line), "RPM %u AVG %u", engineRpm, avgRpm10s);
+  else snprintf(line, sizeof(line), "RPM ----");
+  u8g2.drawStr(0, 16, line);
+
+  dtostrf(batteryVoltage, 0, 1, batt);
+  snprintf(line, sizeof(line), "%u PSI %sV", (unsigned int)(tankPressureFiltered + 0.5), batt);
+  u8g2.drawStr(0, 24, line);
+
+  snprintf(line, sizeof(line), "C:%lu M%d S%d U%d", (unsigned long)startCount, actualMasterOn, actualStartStopOn, actualUnloaderOn);
+  u8g2.drawStr(0, 32, line);
 }
 
 void updateDisplay() {
   if (millis() - lastDisplayMs < DISPLAY_UPDATE_MS) return;
   lastDisplayMs = millis();
-  char line[24];
-  char battStr[8];
-  char hobbsStr[12];
-  char cycleStr[12];
-  uint32_t hobbsTenths = runtimeSeconds / 360UL;
-  uint32_t hobbsHours = hobbsTenths / 10UL;
-  uint8_t hobbsDecimal = hobbsTenths % 10UL;
-  snprintf(hobbsStr, sizeof(hobbsStr), "H:%lu.%u", (unsigned long)hobbsHours, hobbsDecimal);
-  snprintf(cycleStr, sizeof(cycleStr), "C:%lu", (unsigned long)startCount);
-
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_5x8_tf);
-  if (fieldManualMode) {
-    snprintf(line, sizeof(line), "MANUAL");
-  } else if (faultCode != FAULT_NONE) {
-    snprintf(line, sizeof(line), "FLT:%s", faultName(faultCode));
-  } else {
-    snprintf(line, sizeof(line), "%s AUTO:%s", stateName(state), autoOn ? "ON" : "OFF");
-  }
-  u8g2.drawStr(0, 8, line);
-
-  int hobbsWidth = u8g2.getStrWidth(hobbsStr);
-  u8g2.drawStr(128 - hobbsWidth, 8, hobbsStr);
-
-  u8g2.setFont(u8g2_font_helvB14_tf);
-  if (engineRpm > 0 && engineRunningByRpm()) snprintf(line, sizeof(line), "%4u RPM", engineRpm);
-  else snprintf(line, sizeof(line), "---- RPM");
-  u8g2.drawStr(0, 24, line);
-
-  u8g2.setFont(u8g2_font_5x8_tf);
-  dtostrf(batteryVoltage, 0, 1, battStr);
-  snprintf(line, sizeof(line), "%3u PSI %sV", (unsigned int)(tankPressureFiltered + 0.5), battStr);
-  u8g2.drawStr(0, 32, line);
-
-  int cycleWidth = u8g2.getStrWidth(cycleStr);
-  u8g2.drawStr(128 - cycleWidth, 32, cycleStr);
-  u8g2.sendBuffer();
-}
-
-void printSerialStatus() {
-  if (millis() - lastSerialMs < SERIAL_STATUS_MS) return;
-  lastSerialMs = millis();
-  printHumanStatus();
+  u8g2.firstPage();
+  do { drawDisplayPage(); } while (u8g2.nextPage());
 }
 
 void setup() {
   digitalWrite(PIN_FAULT_MOSFET, LOW);
   digitalWrite(PIN_MASTER_MOSFET, LOW);
   digitalWrite(PIN_START_MOSFET, LOW);
-  digitalWrite(PIN_UNLOADER_RELAY, RELAY_BOARD_OFF);
-  digitalWrite(PIN_IDLE_RELAY, RELAY_BOARD_OFF);
-  digitalWrite(PIN_KILL_RELAY, RELAY_BOARD_OFF);
+  digitalWrite(PIN_UNLOADER_RELAY, RELAY_OFF);
+  digitalWrite(PIN_IDLE_RELAY, RELAY_OFF);
+  digitalWrite(PIN_KILL_RELAY, RELAY_OFF);
 
   pinMode(PIN_FAULT_MOSFET, OUTPUT);
   pinMode(PIN_MASTER_MOSFET, OUTPUT);
@@ -886,12 +643,6 @@ void setup() {
   pinMode(PIN_UNLOADER_RELAY, OUTPUT);
   pinMode(PIN_IDLE_RELAY, OUTPUT);
   pinMode(PIN_KILL_RELAY, OUTPUT);
-
-  Serial.begin(115200);
-  delay(500);
-  Serial.println();
-  Serial.println(F("NorthStar Compressor Controller - Phase 0 Field Console"));
-
   pinMode(PIN_PRESSURE_SWITCH, INPUT_PULLUP);
   pinMode(PIN_MASTER_MONITOR, INPUT_PULLUP);
   pinMode(PIN_AUTO_SWITCH, INPUT_PULLUP);
@@ -900,31 +651,22 @@ void setup() {
   pinMode(PIN_FORCE_UNLOAD, INPUT);
   pinMode(PIN_TANK_PRESSURE, INPUT);
 
+  Serial.begin(115200);
+  delay(300);
   Wire.begin();
   u8g2.begin();
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_5x8_tf);
-  u8g2.drawStr(0, 8, "NorthStar Ctrl");
-  u8g2.drawStr(0, 16, "Phase 0 Field");
-  u8g2.drawStr(0, 24, "Serial console ready");
-  u8g2.sendBuffer();
-
   loadFram();
 
   SPI.begin();
   mcp2515.reset();
-  MCP2515::ERROR canSpeedResult = mcp2515.setBitrate(CAN_500KBPS, MCP_8MHZ);
-  Serial.println(canSpeedResult == MCP2515::ERROR_OK ? F("CAN: bitrate OK") : F("CAN: bitrate FAIL"));
+  mcp2515.setBitrate(CAN_500KBPS, MCP_8MHZ);
   mcp2515.setNormalMode();
-  Serial.println(F("CAN: normal mode"));
 
   for (uint8_t i = 0; i < RPM_AVG_SAMPLE_COUNT; i++) rpmSamples[i] = 0;
   stateEnteredMs = millis();
   lastRuntimeTickMs = millis();
   lastFramSaveMs = millis();
-
-  Serial.println(F("READY - type 'help' for field commands"));
-  printFieldHelp();
+  Serial.println(F("NorthStar READY - help"));
 }
 
 void loop() {
@@ -940,5 +682,5 @@ void loop() {
   if (!fieldManualMode) updateStateMachine();
   applyOutputs();
   updateDisplay();
-  printSerialStatus();
+  if (millis() - lastSerialMs >= SERIAL_STATUS_MS) { lastSerialMs = millis(); printStatus(); }
 }
