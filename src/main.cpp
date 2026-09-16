@@ -601,6 +601,18 @@ void updateStateMachine() {
   switch (state) {
     case STATE_WAITING:
       stopReason = STOP_NONE;
+
+      // If AUTO is selected while the engine is already running, adopt the
+      // running engine instead of entering the start sequence.  The OEM
+      // Start/Stop input is a toggle, so pressing it while running would stop
+      // the engine.
+      if (running) {
+        Serial.println(F("EVENT: ADOPT RUNNING ENGINE"));
+        oemRunStartMs = now;
+        enterState(STATE_OEM_RUN);
+        break;
+      }
+
       if (pressureCallConfirmed && !forceUnload) {
         Serial.println(F("EVENT: PRESSURE CALL CONFIRMED"));
         enterState(STATE_MASTER_ON_DELAY);
@@ -608,6 +620,15 @@ void updateStateMachine() {
       break;
 
     case STATE_MASTER_ON_DELAY:
+      // CAN may only become available after Master is asserted.  If the
+      // engine was already running, adopt it as soon as RPM is visible.
+      if (running) {
+        Serial.println(F("EVENT: ADOPT RUNNING ENGINE"));
+        oemRunStartMs = now;
+        enterState(STATE_OEM_RUN);
+        break;
+      }
+
       if (now - stateEnteredMs >= MASTER_ON_DELAY_MS) {
         if (!masterMonitorOn) {
           setFault(FAULT_MASTER_OFF);
@@ -619,6 +640,15 @@ void updateStateMachine() {
       break;
 
     case STATE_PRECRANK_UNLOAD:
+      // Final defensive interlock: never issue the Start/Stop pulse if the
+      // engine became running at any point during the startup delays.
+      if (running) {
+        Serial.println(F("EVENT: START PULSE INHIBITED - ENGINE RUNNING"));
+        oemRunStartMs = now;
+        enterState(STATE_OEM_RUN);
+        break;
+      }
+
       if (now - stateEnteredMs >= PRECRANK_UNLOAD_MS) {
         beginStartStopPulse();
         startCount++;
