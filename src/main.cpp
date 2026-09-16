@@ -40,7 +40,7 @@ const unsigned long PRESSURE_CALL_CONFIRM_MS = 1000;
 const unsigned long PRESSURE_FULL_CONFIRM_MS = 3000;
 const unsigned long MASTER_ON_DELAY_MS = 4000;
 const unsigned long PRECRANK_UNLOAD_MS = 1000;
-unsigned long startPulseMs = 750;
+unsigned long startPulseMs = 1250;
 const unsigned long START_TIMEOUT_MS = 30000;
 const unsigned long OEM_RUN_UNLOADED_MS = 15000;
 const unsigned long STOP_UNLOAD_MS = 8000;
@@ -400,7 +400,6 @@ void updateStateMachine() {
     case STATE_MASTER_ON_DELAY:
       if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
       if (now - stateEnteredMs >= MASTER_ON_DELAY_MS) {
-        if (!masterMonitorOn) { setFault(FAULT_MASTER_OFF); return; }
         enterState(STATE_PRECRANK_UNLOAD);
       }
       break;
