@@ -76,6 +76,10 @@ void setMosfet(uint8_t pin, bool on) {
 // Re-enable after start/run/stop behavior is proven stable.
 const bool ENABLE_PRESSURE_AUTO_STOP = false;
 
+// Bench-test safety: a 13.8 V supply/charger can look like alternator voltage.
+// While false, fresh CAN RPM is the only accepted engine-running indication.
+const bool ENABLE_CHARGE_VOLTAGE_RUN_FALLBACK = false;
+
 // ---------------------- Timing constants ----------------------
 
 const unsigned long PRESSURE_CALL_CONFIRM_MS = 1000;
@@ -277,7 +281,7 @@ bool engineRunningByRpm() {
 }
 
 bool engineRunningByChargingVoltage() {
-  return chargeRunConfirmed;
+  return ENABLE_CHARGE_VOLTAGE_RUN_FALLBACK && chargeRunConfirmed;
 }
 
 bool engineRunning() {
