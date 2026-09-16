@@ -6,23 +6,26 @@
 #include <Adafruit_FRAM_I2C.h>
 
 // ================================================================
-// NorthStar Compressor Controller - Phase 0 Final Prototype TEST
+// NorthStar Compressor Controller - Phase 0 Hardware Rebuild
 //
-// D8  = Master MOSFET -> 12V automotive relay coil, ACTIVE HIGH
-// D9  = Start/Stop MOSFET -> 12V automotive relay coil, ACTIVE HIGH
+// MOSFET outputs, ACTIVE HIGH:
+//   D8 = Master MOSFET -> remote 12V automotive relay coil
+//   D9 = Start/Stop MOSFET -> remote 12V automotive relay coil
+//   D6 = Fault lamp MOSFET
 //
-// A3  = Unloader solenoid 5V relay board, ACTIVE LOW
-// D6  = Fault LED/output 5V relay board, ACTIVE LOW
-// A1  = Idle dry-contact 5V relay board, ACTIVE LOW
-// A2  = Kill dry-contact 5V relay board, ACTIVE LOW
+// Individual relay-module outputs, ACTIVE LOW:
+//   A3 = Unloader solenoid relay
+//   A1 = Idle dry-contact relay
+//   A2 = Kill dry-contact relay
 //
-// D2  = Pressure switch opto, LOW = CALL, HIGH = FULL
-// D3  = Master monitor opto, LOW = master ON
-// D4  = AUTO/OFF opto, LOW = AUTO
-// D5  = Reset/fault clear, LOW = pressed
-// A0  = Battery voltage divider
-// A6  = Force unload analog opto, <600 = active
-// A7  = 200 PSI pressure transducer
+// Inputs:
+//   D2 = Pressure switch opto, LOW = CALL, HIGH = FULL
+//   D3 = OEM master monitor opto, LOW = master ON
+//   D4 = AUTO/OFF opto, LOW = AUTO
+//   D5 = Reset/fault clear, LOW = pressed
+//   A0 = Battery voltage divider
+//   A6 = Force unload analog opto, <600 = active
+//   A7 = 200 PSI pressure transducer
 //
 // CAN RPM:
 //   EXT ID 0x0C665500
@@ -41,14 +44,17 @@ const uint8_t PIN_BATT_SENSE      = A0;
 const uint8_t PIN_FORCE_UNLOAD    = A6;
 const uint8_t PIN_TANK_PRESSURE   = A7;
 
+// MOSFET outputs, active HIGH
+const uint8_t PIN_FAULT_MOSFET    = 6;
 const uint8_t PIN_MASTER_MOSFET   = 8;
 const uint8_t PIN_START_MOSFET    = 9;
 
-const uint8_t PIN_FAULT_RELAY     = 6;
+// Individual relay-module outputs, active LOW
 const uint8_t PIN_UNLOADER_RELAY  = A3;
 const uint8_t PIN_IDLE_RELAY      = A1;
 const uint8_t PIN_KILL_RELAY      = A2;
 
+// CAN
 const uint8_t PIN_CAN_CS          = 10;
 
 // ---------------------- Output helpers ----------------------
@@ -66,6 +72,8 @@ void setMosfet(uint8_t pin, bool on) {
 
 // ---------------------- Test / behavior switches ----------------------
 
+// Intentionally disabled during Phase 0 troubleshooting.
+// Re-enable after start/run/stop behavior is proven stable.
 const bool ENABLE_PRESSURE_AUTO_STOP = false;
 
 // ---------------------- Timing constants ----------------------
@@ -686,8 +694,8 @@ void applyOutputs() {
 
     setMosfet(PIN_MASTER_MOSFET, masterOn);
     setMosfet(PIN_START_MOSFET, startStopOn);
+    setMosfet(PIN_FAULT_MOSFET, faultOutOn);
     setRelayBoard(PIN_UNLOADER_RELAY, unloaderOn);
-    setRelayBoard(PIN_FAULT_RELAY, faultOutOn);
     setRelayBoard(PIN_IDLE_RELAY, idleOn);
     setRelayBoard(PIN_KILL_RELAY, killOn);
     return;
@@ -698,25 +706,30 @@ void applyOutputs() {
       masterOn = false;
       unloaderOn = forceUnload;
       break;
+
     case STATE_MASTER_ON_DELAY:
       masterOn = true;
       unloaderOn = forceUnload;
       break;
+
     case STATE_PRECRANK_UNLOAD:
     case STATE_STARTING:
     case STATE_OEM_RUN:
       masterOn = true;
       unloaderOn = true;
       break;
+
     case STATE_RUNNING_LOADED:
       masterOn = true;
       unloaderOn = forceUnload;
       break;
+
     case STATE_STOP_UNLOAD:
     case STATE_STOPPING:
       masterOn = true;
       unloaderOn = true;
       break;
+
     case STATE_FAULT:
       masterOn = running && !emergencyKillActive;
       unloaderOn = running || forceUnload;
@@ -728,12 +741,14 @@ void applyOutputs() {
     unloaderOn = true;
   }
 
+  // Idle is intentionally unused in the normal Phase 0 sequence.
   idleOn = false;
 
   setMosfet(PIN_MASTER_MOSFET, masterOn);
   setMosfet(PIN_START_MOSFET, startStopOn);
+  setMosfet(PIN_FAULT_MOSFET, faultOutOn);
+
   setRelayBoard(PIN_UNLOADER_RELAY, unloaderOn);
-  setRelayBoard(PIN_FAULT_RELAY, faultOutOn);
   setRelayBoard(PIN_IDLE_RELAY, idleOn);
   setRelayBoard(PIN_KILL_RELAY, killOn);
 }
@@ -747,15 +762,21 @@ void updateDisplay() {
   lastDisplayMs = millis();
 
   char line[24];
+  char battStr[8];
+
   u8g2.clearBuffer();
 
+  // Top line: machine state or active fault.
   u8g2.setFont(u8g2_font_5x8_tf);
-  snprintf(line, sizeof(line), "%s A:%s P:%s",
-           stateName(state),
-           autoOn ? "ON" : "OFF",
-           pressureCallRaw ? "CALL" : "FULL");
+  if (faultCode != FAULT_NONE) {
+    snprintf(line, sizeof(line), "FLT:%s", faultName(faultCode));
+  } else {
+    snprintf(line, sizeof(line), "%s  AUTO:%s",
+             stateName(state), autoOn ? "ON" : "OFF");
+  }
   u8g2.drawStr(0, 8, line);
 
+  // Center: large live CAN RPM.
   u8g2.setFont(u8g2_font_helvB14_tf);
   if (engineRpm > 0 && engineRunningByRpm()) {
     snprintf(line, sizeof(line), "%4u RPM", engineRpm);
@@ -764,24 +785,14 @@ void updateDisplay() {
   }
   u8g2.drawStr(0, 24, line);
 
+  // Bottom: fast local instrumentation only -- tank PSI and battery voltage.
+  // AVR snprintf does not reliably support %f, so use dtostrf for battery.
   u8g2.setFont(u8g2_font_5x8_tf);
-  if (faultCode != FAULT_NONE) {
-    snprintf(line, sizeof(line), "FAULT:%s PSI:%3u",
-             faultName(faultCode),
-             (unsigned int)(tankPressureFiltered + 0.5));
-  } else {
-    uint32_t hobbsTenths = runtimeSeconds / 360UL;
-    uint32_t hobbsWhole = hobbsTenths / 10UL;
-    uint32_t hobbsTenth = hobbsTenths % 10UL;
-
-    snprintf(line, sizeof(line), "PSI:%3u H:%lu.%lu S:%lu",
-             (unsigned int)(tankPressureFiltered + 0.5),
-             hobbsWhole,
-             hobbsTenth,
-             startCount);
-  }
-
+  dtostrf(batteryVoltage, 0, 1, battStr);
+  snprintf(line, sizeof(line), "%3u PSI  %sV",
+           (unsigned int)(tankPressureFiltered + 0.5), battStr);
   u8g2.drawStr(0, 32, line);
+
   u8g2.sendBuffer();
 }
 
@@ -818,18 +829,20 @@ void printSerialStatus() {
 // ================================================================
 
 void setup() {
+  // Force all outputs safe before initializing anything else.
+  digitalWrite(PIN_FAULT_MOSFET, LOW);
   digitalWrite(PIN_MASTER_MOSFET, LOW);
   digitalWrite(PIN_START_MOSFET, LOW);
 
   digitalWrite(PIN_UNLOADER_RELAY, RELAY_BOARD_OFF);
-  digitalWrite(PIN_FAULT_RELAY, RELAY_BOARD_OFF);
   digitalWrite(PIN_IDLE_RELAY, RELAY_BOARD_OFF);
   digitalWrite(PIN_KILL_RELAY, RELAY_BOARD_OFF);
 
+  pinMode(PIN_FAULT_MOSFET, OUTPUT);
   pinMode(PIN_MASTER_MOSFET, OUTPUT);
   pinMode(PIN_START_MOSFET, OUTPUT);
+
   pinMode(PIN_UNLOADER_RELAY, OUTPUT);
-  pinMode(PIN_FAULT_RELAY, OUTPUT);
   pinMode(PIN_IDLE_RELAY, OUTPUT);
   pinMode(PIN_KILL_RELAY, OUTPUT);
 
@@ -837,7 +850,7 @@ void setup() {
   delay(500);
 
   Serial.println();
-  Serial.println(F("NorthStar Compressor Controller - Phase 0 TEST"));
+  Serial.println(F("NorthStar Compressor Controller - Phase 0 Hardware Rebuild"));
 
   pinMode(PIN_PRESSURE_SWITCH, INPUT_PULLUP);
   pinMode(PIN_MASTER_MONITOR, INPUT_PULLUP);
@@ -854,8 +867,8 @@ void setup() {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_5x8_tf);
   u8g2.drawStr(0, 8, "NorthStar Ctrl");
-  u8g2.drawStr(0, 16, "Phase 0 TEST");
-  u8g2.drawStr(0, 24, "D8/D9 MOSFET");
+  u8g2.drawStr(0, 16, "Phase 0 Rebuild");
+  u8g2.drawStr(0, 24, "D6/D8/D9 MOSFET");
   u8g2.sendBuffer();
 
   loadFram();
