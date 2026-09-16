@@ -12,13 +12,13 @@
 | A6 | Force-unload opto | Analog-only; <600 = active |
 | A7 | 200 PSI pressure transducer | Assumed 0.5-4.5 V = 0-200 PSI |
 
-## Outputs — current rebuild plan
+## Outputs — Phase 0 hardware rebuild
 
 | Nano pin | Function | Output hardware | Logic |
 |---|---|---|---|
-| D8 | Master switch bypass | N-MOSFET -> 12 V automotive relay | Active HIGH |
-| D9 | Start/Stop button bypass | N-MOSFET -> 12 V automotive relay | Active HIGH |
-| D6 | Fault lamp | N-MOSFET | Active HIGH; planned change from baseline code |
+| D8 | Master switch bypass | N-MOSFET -> remote 12 V automotive relay | Active HIGH |
+| D9 | Start/Stop button bypass | N-MOSFET -> remote 12 V automotive relay | Active HIGH |
+| D6 | Fault lamp | N-MOSFET | Active HIGH |
 | A3 | Unloader solenoid | Individual relay module | Active LOW relay input |
 | A1 | Idle dry contact | Individual relay module | Active LOW relay input |
 | A2 | Kill dry contact | Individual relay module | Active LOW relay input |
