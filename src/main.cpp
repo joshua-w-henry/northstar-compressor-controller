@@ -41,13 +41,20 @@ const unsigned long PRESSURE_FULL_CONFIRM_MS = 3000;
 const unsigned long MASTER_ON_DELAY_MS = 4000;
 const unsigned long PRECRANK_UNLOAD_MS = 1000;
 unsigned long startPulseMs = 1250;
-const unsigned long START_TIMEOUT_MS = 30000;
+// OEM engine controller owns its internal retry sequence. The engine manual
+// specifies up to three automatic attempts but does not publish their timing,
+// so allow a generous one-minute envelope after the initial button press.
+const unsigned long STARTER_ACTIVITY_TIMEOUT_MS = 5000;
+const unsigned long OEM_START_SEQUENCE_TIMEOUT_MS = 60000;
 const unsigned long OEM_RUN_UNLOADED_MS = 15000;
-const unsigned long STOP_UNLOAD_MS = 8000;
+const unsigned long STOP_UNLOAD_MS = 10000;
 const unsigned long MASTER_OFF_DELAY_MS = 6000;
 const unsigned long RPM_STALE_MS = 1500;
 const unsigned long RPM_RUN_CONFIRM_MS = 750;
+const unsigned long START_CONFIRMED_MS = 1000;
 const unsigned long ENGINE_LOST_CONFIRM_MS = 3000;
+const uint16_t STARTER_ACTIVITY_RPM = 100;
+const uint16_t START_CONFIRMED_RPM = 800;
 const uint16_t ENGINE_RUNNING_RPM = 400;
 const uint16_t MAX_ACCEPTED_RPM = 4000;
 const uint16_t EMERGENCY_KILL_AVG_RPM = 3500;
@@ -129,6 +136,10 @@ uint16_t avgRpm10s = 0;
 unsigned long rpmRunStartedMs = 0;
 bool rpmRunConfirmed = false;
 unsigned long engineLostStartedMs = 0;
+
+// OEM start-sequence supervision
+bool starterActivitySeen = false;
+unsigned long startConfirmedStartedMs = 0;
 
 // Automatic pulse
 bool startStopPulseActive = false;
@@ -374,6 +385,8 @@ bool faultBlinkOutputOn() {
 void releaseControlForAutoOff() {
   stopReason = RELEASE_AUTO;
   startStopPulseActive = false;
+  starterActivitySeen = false;
+  startConfirmedStartedMs = 0;
   if (state != STATE_FAULT) enterState(STATE_WAITING);
 }
 
@@ -389,8 +402,9 @@ void updateStateMachine() {
   }
   if (!autoOn) { releaseControlForAutoOff(); return; }
 
-  // Engine-loss supervision applies only to normal running states. Do not
-  // supervise STOPPING because loss of RPM there is the intended outcome.
+  // Engine-loss supervision applies only to normal running states. During
+  // STARTING the OEM engine controller owns its internal retry sequence, and
+  // during STOPPING/idle-down RPM loss is either expected or harmless.
   bool shouldRun = state == STATE_OEM_RUN || state == STATE_RUNNING_LOADED;
   if (shouldRun) {
     if (!running) {
@@ -411,6 +425,8 @@ void updateStateMachine() {
   switch (state) {
     case STATE_WAITING:
       stopReason = STOP_NONE;
+      starterActivitySeen = false;
+      startConfirmedStartedMs = 0;
       if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
       if (pressureCallConfirmed && !forceUnload) enterState(STATE_MASTER_ON_DELAY);
       break;
@@ -423,6 +439,8 @@ void updateStateMachine() {
     case STATE_PRECRANK_UNLOAD:
       if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
       if (now - stateEnteredMs >= PRECRANK_UNLOAD_MS) {
+        starterActivitySeen = false;
+        startConfirmedStartedMs = 0;
         beginStartStopPulse();
         startCount++;
         saveFram();
@@ -430,10 +448,43 @@ void updateStateMachine() {
       }
       break;
 
-    case STATE_STARTING:
-      if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); }
-      else if (now - stateEnteredMs >= START_TIMEOUT_MS) setFault(FAULT_START_FAIL);
+    case STATE_STARTING: {
+      bool freshRpm = (now - lastRpmFrameMs) <= RPM_STALE_MS;
+
+      // Seeing starter-speed RPM proves the OEM controller accepted the button
+      // press. From that point forward, leave it alone and let it perform its
+      // own up-to-three-attempt sequence.
+      if (!starterActivitySeen && freshRpm && engineRpm >= STARTER_ACTIVITY_RPM) {
+        starterActivitySeen = true;
+        Serial.println(F("EV CRANK"));
+      }
+
+      // Do not call a brief 400-500 RPM catch a successful start. Field data
+      // showed a failed attempt can live there for several seconds before the
+      // OEM controller retries. Require a real climb above 800 RPM for 1 s.
+      if (freshRpm && engineRpm >= START_CONFIRMED_RPM) {
+        if (!startConfirmedStartedMs) startConfirmedStartedMs = now;
+        if (now - startConfirmedStartedMs >= START_CONFIRMED_MS) {
+          Serial.println(F("EV START CONFIRMED"));
+          oemRunStartMs = now;
+          enterState(STATE_OEM_RUN);
+        }
+      } else {
+        startConfirmedStartedMs = 0;
+      }
+
+      if (state != STATE_STARTING) break;
+
+      // If the button press never produces even starter-speed RPM, fail fast.
+      // Once cranking has been observed, allow the OEM controller a full minute
+      // to complete its documented three-attempt sequence.
+      if (!starterActivitySeen && now - stateEnteredMs >= STARTER_ACTIVITY_TIMEOUT_MS) {
+        setFault(FAULT_START_FAIL);
+      } else if (starterActivitySeen && now - stateEnteredMs >= OEM_START_SEQUENCE_TIMEOUT_MS) {
+        setFault(FAULT_START_FAIL);
+      }
       break;
+    }
 
     case STATE_OEM_RUN:
       if (now - oemRunStartMs >= OEM_RUN_UNLOADED_MS) enterState(STATE_RUNNING_LOADED);
@@ -491,15 +542,34 @@ void applyOutputs() {
   if (!autoOn) { writeOutputs(false, false, forceUnload, false, false); return; }
 
   switch (state) {
-    case STATE_MASTER_ON_DELAY: master = true; unload = forceUnload; break;
+    case STATE_MASTER_ON_DELAY:
+      master = true;
+      unload = forceUnload;
+      break;
     case STATE_PRECRANK_UNLOAD:
     case STATE_STARTING:
-    case STATE_OEM_RUN: master = true; unload = true; break;
-    case STATE_RUNNING_LOADED: master = true; unload = forceUnload; break;
+    case STATE_OEM_RUN:
+      master = true;
+      unload = true;
+      break;
+    case STATE_RUNNING_LOADED:
+      master = true;
+      unload = forceUnload;
+      idle = forceUnload;   // manual force-unload also requests engine idle
+      break;
     case STATE_STOP_UNLOAD:
-    case STATE_STOPPING: master = true; unload = true; break;
-    case STATE_FAULT: master = running && !emergencyKillActive; unload = running || forceUnload; break;
-    default: unload = forceUnload; break;
+    case STATE_STOPPING:
+      master = true;
+      unload = true;
+      idle = true;          // 10 s unloaded idle-down, then remain idle through stop
+      break;
+    case STATE_FAULT:
+      master = running && !emergencyKillActive;
+      unload = running || forceUnload;
+      break;
+    default:
+      unload = forceUnload;
+      break;
   }
   if (emergencyKillActive) { kill = true; unload = true; }
   writeOutputs(master, startStopPulseActive, unload, idle, kill);
