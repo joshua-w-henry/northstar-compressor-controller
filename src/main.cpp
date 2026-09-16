@@ -767,35 +767,68 @@ void updateDisplay() {
 
   char line[24];
   char battStr[8];
+  char hobbsStr[12];
+  char cycleStr[12];
+
+  // Avoid AVR floating-point snprintf.
+  uint32_t hobbsTenths = runtimeSeconds / 360UL;
+  uint32_t hobbsHours = hobbsTenths / 10UL;
+  uint8_t hobbsDecimal = hobbsTenths % 10UL;
+
+  snprintf(hobbsStr, sizeof(hobbsStr),
+           "H:%lu.%u",
+           (unsigned long)hobbsHours,
+           hobbsDecimal);
+
+  snprintf(cycleStr, sizeof(cycleStr),
+           "C:%lu",
+           (unsigned long)startCount);
 
   u8g2.clearBuffer();
 
-  // Top line: machine state or active fault.
+  // Top left: machine state / fault.
   u8g2.setFont(u8g2_font_5x8_tf);
+
   if (faultCode != FAULT_NONE) {
     snprintf(line, sizeof(line), "FLT:%s", faultName(faultCode));
   } else {
-    snprintf(line, sizeof(line), "%s  AUTO:%s",
-             stateName(state), autoOn ? "ON" : "OFF");
+    snprintf(line, sizeof(line), "%s AUTO:%s",
+             stateName(state),
+             autoOn ? "ON" : "OFF");
   }
+
   u8g2.drawStr(0, 8, line);
+
+  // Top right: Hobbs.
+  int hobbsWidth = u8g2.getStrWidth(hobbsStr);
+  u8g2.drawStr(128 - hobbsWidth, 8, hobbsStr);
 
   // Center: large live CAN RPM.
   u8g2.setFont(u8g2_font_helvB14_tf);
+
   if (engineRpm > 0 && engineRunningByRpm()) {
     snprintf(line, sizeof(line), "%4u RPM", engineRpm);
   } else {
     snprintf(line, sizeof(line), "---- RPM");
   }
+
   u8g2.drawStr(0, 24, line);
 
-  // Bottom: fast local instrumentation only -- tank PSI and battery voltage.
-  // AVR snprintf does not reliably support %f, so use dtostrf for battery.
+  // Bottom left: pressure + battery.
   u8g2.setFont(u8g2_font_5x8_tf);
+
   dtostrf(batteryVoltage, 0, 1, battStr);
-  snprintf(line, sizeof(line), "%3u PSI  %sV",
-           (unsigned int)(tankPressureFiltered + 0.5), battStr);
+
+  snprintf(line, sizeof(line),
+           "%3u PSI %sV",
+           (unsigned int)(tankPressureFiltered + 0.5),
+           battStr);
+
   u8g2.drawStr(0, 32, line);
+
+  // Bottom right: cycle count.
+  int cycleWidth = u8g2.getStrWidth(cycleStr);
+  u8g2.drawStr(128 - cycleWidth, 32, cycleStr);
 
   u8g2.sendBuffer();
 }
