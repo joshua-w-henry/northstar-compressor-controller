@@ -46,6 +46,7 @@ const unsigned long OEM_RUN_UNLOADED_MS = 15000;
 const unsigned long STOP_UNLOAD_MS = 8000;
 const unsigned long MASTER_OFF_DELAY_MS = 6000;
 const unsigned long RPM_STALE_MS = 1500;
+const unsigned long RPM_RUN_CONFIRM_MS = 750;
 const unsigned long ENGINE_LOST_CONFIRM_MS = 3000;
 const uint16_t ENGINE_RUNNING_RPM = 400;
 const uint16_t MAX_ACCEPTED_RPM = 4000;
@@ -125,7 +126,8 @@ uint8_t rpmSampleIndex = 0;
 uint8_t rpmSampleFilled = 0;
 unsigned long lastRpmSampleMs = 0;
 uint16_t avgRpm10s = 0;
-bool wasEngineRunning = false;
+unsigned long rpmRunStartedMs = 0;
+bool rpmRunConfirmed = false;
 unsigned long engineLostStartedMs = 0;
 
 // Automatic pulse
@@ -182,9 +184,10 @@ const char* faultName(FaultCode f) {
   }
 }
 
-bool engineRunningByRpm() {
+bool rpmSignalPresent() {
   return engineRpm >= ENGINE_RUNNING_RPM && (millis() - lastRpmFrameMs) <= RPM_STALE_MS;
 }
+bool engineRunningByRpm() { return rpmRunConfirmed; }
 bool engineRunningByChargingVoltage() {
   return ENABLE_CHARGE_VOLTAGE_RUN_FALLBACK && chargeRunConfirmed;
 }
@@ -320,14 +323,24 @@ void readCanRpm() {
       }
     }
   }
-  if (millis() - lastRpmFrameMs > RPM_STALE_MS) engineRpm = 0;
+
+  unsigned long now = millis();
+  if (now - lastRpmFrameMs > RPM_STALE_MS) engineRpm = 0;
+
+  if (rpmSignalPresent()) {
+    if (!rpmRunStartedMs) rpmRunStartedMs = now;
+    rpmRunConfirmed = (now - rpmRunStartedMs >= RPM_RUN_CONFIRM_MS);
+  } else {
+    rpmRunStartedMs = 0;
+    rpmRunConfirmed = false;
+  }
 }
 
 void updateRpmAverage() {
   unsigned long now = millis();
   if (now - lastRpmSampleMs < RPM_AVG_SAMPLE_MS) return;
   lastRpmSampleMs = now;
-  rpmSamples[rpmSampleIndex] = engineRunningByRpm() ? engineRpm : 0;
+  rpmSamples[rpmSampleIndex] = rpmSignalPresent() ? engineRpm : 0;
   rpmSampleIndex = (rpmSampleIndex + 1) % RPM_AVG_SAMPLE_COUNT;
   if (rpmSampleFilled < RPM_AVG_SAMPLE_COUNT) rpmSampleFilled++;
   uint32_t sum = 0;
@@ -376,18 +389,23 @@ void updateStateMachine() {
   }
   if (!autoOn) { releaseControlForAutoOff(); return; }
 
-  bool shouldRun = state == STATE_OEM_RUN || state == STATE_RUNNING_LOADED || state == STATE_STOP_UNLOAD || state == STATE_STOPPING;
+  // Engine-loss supervision applies only to normal running states. Do not
+  // supervise STOPPING because loss of RPM there is the intended outcome.
+  bool shouldRun = state == STATE_OEM_RUN || state == STATE_RUNNING_LOADED;
   if (shouldRun) {
-    if (!running && wasEngineRunning) {
+    if (!running) {
       if (!engineLostStartedMs) engineLostStartedMs = now;
       if (now - engineLostStartedMs >= ENGINE_LOST_CONFIRM_MS) {
         stopReason = STOP_ENGINE_LOST;
         setFault(FAULT_ENGINE_LOST);
         return;
       }
-    } else engineLostStartedMs = 0;
-  } else engineLostStartedMs = 0;
-  wasEngineRunning = running;
+    } else {
+      engineLostStartedMs = 0;
+    }
+  } else {
+    engineLostStartedMs = 0;
+  }
   if (state == STATE_FAULT) return;
 
   switch (state) {
@@ -399,9 +417,7 @@ void updateStateMachine() {
 
     case STATE_MASTER_ON_DELAY:
       if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
-      if (now - stateEnteredMs >= MASTER_ON_DELAY_MS) {
-        enterState(STATE_PRECRANK_UNLOAD);
-      }
+      if (now - stateEnteredMs >= MASTER_ON_DELAY_MS) enterState(STATE_PRECRANK_UNLOAD);
       break;
 
     case STATE_PRECRANK_UNLOAD:
