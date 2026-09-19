@@ -79,13 +79,13 @@ The root cause was not bad SD cards, bad HW-125 modules, or SPI timing. The inst
 
 **Rule:** before replacing parts or changing firmware, verify continuity from the actual system power rails to every board that depends on them.
 
-## 9. Do not over-trust a nominally valid pin assignment
+## 9. Do not let a power fault masquerade as a pin-mapping fault
 
-GPIO10-13 were logically reasonable and worked in an earlier configuration, yet the installed build became reliable only after moving SD SPI to GPIO4-7.
+GPIO10-13 were valid for the SD interface all along. The apparent SPI/pin problem was a consequence of the ESP32-S3 not being soldered to the system 5 V and GND rails, not a bad GPIO assignment.
 
-A pin can be "valid" in a datasheet sense and still be a poor choice on a specific carrier, boot configuration, peripheral mix, or physical implementation.
+The later GPIO4-7 mapping also worked, but that success should not be interpreted as proof that GPIO10-13 were unsuitable.
 
-**Rule:** freeze only pin assignments that have been demonstrated on the exact board, firmware, and installed hardware configuration.
+**Rule:** when a pin map has already been proven, do not blame or redesign it until power, ground, continuity, and board-level connectivity have been verified first.
 
 ## 10. Separate safety authority from telemetry
 
