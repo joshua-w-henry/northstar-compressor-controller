@@ -71,11 +71,13 @@ Likewise, the SD problem became tractable once power, regulator output, continui
 
 **Rule:** when a problem is event-driven, instrument the event itself rather than relying on idle measurements.
 
-## 8. Change one common factor at a time
+## 8. Verify the board is actually tied into the power rails
 
-Two SD cards, two HW-125 modules, new connectors, verified 5.1 V input, verified 3.3 V regulator output, and lower SPI speed all failed identically. Replacing more of the same hardware was no longer informative. Remapping SPI to GPIO4-7 changed a remaining common factor and immediately solved the problem.
+The SD troubleshooting branch became much longer than it needed to be because the ESP32-S3 itself was not soldered to the system's 5 V and GND rails. The SD module had power and its onboard regulator measured correctly, which made the missing ESP power connection easy to overlook.
 
-**Rule:** after two equivalent replacements fail the same way, stop swapping parts and identify the common path shared by every failure.
+The root cause was not bad SD cards, bad HW-125 modules, or SPI timing. The installed ESP board simply was not electrically connected to the intended 5 V and ground rails.
+
+**Rule:** before replacing parts or changing firmware, verify continuity from the actual system power rails to every board that depends on them.
 
 ## 9. Do not over-trust a nominally valid pin assignment
 
