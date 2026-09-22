@@ -584,7 +584,7 @@ void applyOutputs() {
 
   bool running = engineRunning();
   bool master = false, unload = false, idle = false, kill = false;
-  if (!autoOn) { writeOutputs(false, false, forceUnload, false, false); return; }
+  if (!effectiveAutoOn()) { writeOutputs(false, false, forceUnload, false, false); return; }
 
   switch (state) {
     case STATE_MASTER_ON_DELAY:
