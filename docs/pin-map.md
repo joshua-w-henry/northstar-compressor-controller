@@ -49,11 +49,28 @@ Current I2C devices:
 - 0.91-inch 128x32 OLED
 - FRAM at address `0x50`
 
-## Planned ESP32 sidecar interface
+## ESP32 sidecar interface
 
-Initial monitoring-only link:
-- Nano D1 / TX -> level divider -> ESP32 RX
+Telemetry path:
+- Nano D1 / TX (5 V) -> existing level divider -> ESP32 RX
 - Common ground
 
-Future optional return path:
-- ESP32 TX -> Nano D0 / RX through a removable jumper
+Limited return-control path:
+- ESP32 TX (3.3 V) -> 1 kΩ series resistor -> removable jumper -> Nano D0 / RX
+- 3.3 V from the ESP32 is valid HIGH logic for the ATmega328P Nano input.
+- Remove the jumper for Nano programming/serial troubleshooting if needed.
+
+The return path accepts only the narrow serial command surface implemented by the
+Nano. The Home Assistant-facing control is `remote auto on|off`; it changes the
+remote AUTO permit but does not directly command Master, Start/Stop, Unloader,
+Idle, Kill, or Reset.
+
+AUTO authority is AND-gated:
+
+```text
+effective AUTO = physical AUTO switch AND remote AUTO permit
+```
+
+The physical OFF position always wins. A deliberate local OFF -> AUTO switch
+cycle clears a persisted remote inhibit, so local recovery does not depend on
+the ESP32, MQTT, or Home Assistant.
