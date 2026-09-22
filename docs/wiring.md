@@ -91,3 +91,27 @@ Planned addition:
 ## Battery note
 
 The original clean bench operation used an Optima RedTop. Later tests used a small 20 Ah battery and showed intermittent poor cranking and control instability. A cranking-capable battery is a primary test variable for the next validation cycle.
+
+## ESP32 -> Nano limited control link
+
+Wire the return UART conservatively:
+
+```text
+ESP32 GPIO 8 / TX
+      |
+     1 kΩ
+      |
+ removable jumper
+      |
+Nano D0 / RX
+```
+
+Keep the existing Nano D1/TX -> divider -> ESP32 RX telemetry path unchanged.
+
+The remote path is intentionally permission-only. `remote auto off` inhibits
+automatic operation; `remote auto on` restores permission, but the Nano still
+requires the physical AUTO switch and all normal pressure/start-state logic.
+Remote state is stored in FRAM. The first firmware upgrade defaults the new
+remote permit to ON so existing operation is preserved.
+
+A physical OFF -> AUTO switch cycle locally clears a remote inhibit.
