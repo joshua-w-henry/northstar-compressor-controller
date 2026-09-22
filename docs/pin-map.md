@@ -17,7 +17,7 @@
 | Nano pin | Function | Output hardware | Logic |
 |---|---|---|---|
 | D8 | Master switch bypass | N-MOSFET -> remote 12 V automotive relay | Active HIGH |
-| D9 | Start/Stop button bypass | N-MOSFET -> remote 12 V automotive relay | Active HIGH |
+| D9 | Start/Stop command -> MOSFET -> remote 12 V automotive relay | Active HIGH |
 | D6 | Fault lamp | N-MOSFET | Active HIGH |
 | A3 | Unloader solenoid | Individual relay module | Active LOW relay input |
 | A1 | Idle dry contact | Individual relay module | Active LOW relay input |
@@ -56,9 +56,10 @@ Telemetry path:
 - Common ground
 
 Limited return-control path:
-- ESP32 TX (3.3 V) -> 1 kΩ series resistor -> removable jumper -> Nano D0 / RX
+- ESP32 GPIO 8 / TX (3.3 V) -> 220 Ω series resistor -> removable jumper -> Nano D0 / RX
 - 3.3 V from the ESP32 is valid HIGH logic for the ATmega328P Nano input.
 - Remove the jumper for Nano programming/serial troubleshooting if needed.
+- The 220 Ω value is field-proven. A 1 kΩ series resistor did not pull Nano RX low enough because the Nano onboard USB-serial interface also biases RX0 through its own resistance; the measured RX idle node was about 4.2 V with 1 kΩ. Replacing it with 220 Ω restored reliable UART control.
 
 The return path accepts only the narrow serial command surface implemented by the
 Nano. The Home Assistant-facing control is `remote auto on|off`; it changes the
