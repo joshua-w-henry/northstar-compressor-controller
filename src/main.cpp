@@ -84,6 +84,9 @@ const uint32_t FRAM_MAGIC = 0x4E535431UL;
 const uint16_t FRAM_ADDR_MAGIC = 0;
 const uint16_t FRAM_ADDR_STARTS = 4;
 const uint16_t FRAM_ADDR_RUNTIME = 8;
+const uint16_t FRAM_ADDR_REMOTE_MAGIC = 12;
+const uint16_t FRAM_ADDR_REMOTE_AUTO = 16;
+const uint32_t FRAM_REMOTE_MAGIC = 0x524D5431UL;  // "RMT1"
 const uint32_t RPM_CAN_ID = 0x0C665500UL;
 
 enum State {
@@ -106,7 +109,10 @@ unsigned long stopPulseEndedMs = 0;
 bool emergencyKillActive = false;
 
 // Inputs / measurements
-bool autoOn = false;
+bool autoOn = false;                  // physical AUTO/OFF switch
+bool remoteAutoPermit = true;         // ESP32 may inhibit AUTO, never force a start
+bool physicalAutoInitialized = false;
+bool lastPhysicalAutoOn = false;
 bool pressureCallRaw = false;
 bool pressureCallConfirmed = false;
 bool pressureFullConfirmed = false;
@@ -265,11 +271,35 @@ void loadFram() {
   }
   startCount = framReadU32(FRAM_ADDR_STARTS);
   runtimeSeconds = framReadU32(FRAM_ADDR_RUNTIME);
+
+  // Separate migration marker so existing installations upgrade with remote
+  // AUTO permitted instead of interpreting previously-unused FRAM as state.
+  if (framReadU32(FRAM_ADDR_REMOTE_MAGIC) != FRAM_REMOTE_MAGIC) {
+    framWriteU32(FRAM_ADDR_REMOTE_MAGIC, FRAM_REMOTE_MAGIC);
+    fram.write(FRAM_ADDR_REMOTE_AUTO, 1);
+  }
+  remoteAutoPermit = fram.read(FRAM_ADDR_REMOTE_AUTO) != 0;
 }
 void saveFram() {
   if (!framPresent) return;
   framWriteU32(FRAM_ADDR_STARTS, startCount);
   framWriteU32(FRAM_ADDR_RUNTIME, runtimeSeconds);
+}
+
+bool effectiveAutoOn() {
+  return autoOn && remoteAutoPermit;
+}
+
+void setRemoteAutoPermit(bool permit, bool localRecovery = false) {
+  if (remoteAutoPermit == permit) return;
+
+  remoteAutoPermit = permit;
+  if (framPresent) fram.write(FRAM_ADDR_REMOTE_AUTO, permit ? 1 : 0);
+
+  Serial.print(F("EV REMOTE AUTO "));
+  Serial.print(permit ? F("ON") : F("OFF"));
+  if (localRecovery) Serial.print(F(" LOCAL"));
+  Serial.println();
 }
 
 uint16_t analogReadAveraged(uint8_t pin) {
@@ -281,7 +311,22 @@ uint16_t analogReadAveraged(uint8_t pin) {
 void readInputs() {
   unsigned long now = millis();
   pressureCallRaw = digitalRead(PIN_PRESSURE_SWITCH) == LOW;
-  autoOn = digitalRead(PIN_AUTO_SWITCH) == LOW;
+
+  const bool newPhysicalAutoOn = digitalRead(PIN_AUTO_SWITCH) == LOW;
+  if (!physicalAutoInitialized) {
+    physicalAutoInitialized = true;
+    lastPhysicalAutoOn = newPhysicalAutoOn;
+  } else {
+    // A deliberate local OFF -> AUTO cycle clears a persisted remote inhibit.
+    // This guarantees the machine remains locally recoverable if the ESP32,
+    // MQTT, or Home Assistant is unavailable.
+    if (newPhysicalAutoOn && !lastPhysicalAutoOn && !remoteAutoPermit) {
+      setRemoteAutoPermit(true, true);
+    }
+    lastPhysicalAutoOn = newPhysicalAutoOn;
+  }
+  autoOn = newPhysicalAutoOn;
+
   masterMonitorOn = digitalRead(PIN_MASTER_MONITOR) == LOW;
   resetPressed = digitalRead(PIN_RESET_BUTTON) == LOW;
   forceUnload = analogRead(PIN_FORCE_UNLOAD) < 600;
@@ -400,7 +445,7 @@ void updateStateMachine() {
     stopReason = STOP_NONE;
     if (state == STATE_FAULT) enterState(STATE_WAITING);
   }
-  if (!autoOn) { releaseControlForAutoOff(); return; }
+  if (!effectiveAutoOn()) { releaseControlForAutoOff(); return; }
 
   // Engine-loss supervision applies only to normal running states. During
   // STARTING the OEM engine controller owns its internal retry sequence, and
@@ -602,7 +647,9 @@ void printStatus() {
   Serial.print(F(" pulse=")); Serial.print(startPulseMs);
   Serial.print(F(" fault=")); Serial.print(faultName(faultCode));
   Serial.print(F(" hrs=")); Serial.print(runtimeSeconds / 3600.0, 2);
-  Serial.print(F(" cyc=")); Serial.println(startCount);
+  Serial.print(F(" cyc=")); Serial.print(startCount);
+  Serial.print(F(" rmt=")); Serial.print(remoteAutoPermit ? F("ON") : F("OFF"));
+  Serial.print(F(" eff=")); Serial.println(effectiveAutoOn() ? F("ON") : F("OFF"));
 }
 
 void setManualOutput(char which, bool on) {
@@ -624,7 +671,17 @@ void handleSerialCommand(char* c) {
 
   if (!strcmp(c, "status")) { printStatus(); return; }
   if (!strcmp(c, "help") || !strcmp(c, "?")) {
-    Serial.println(F("master/start/unload/idle/kill on|off; set start latch time N; auto; alloff; status"));
+    Serial.println(F("master/start/unload/idle/kill on|off; remote auto on|off; set start latch time N; auto; alloff; status"));
+    return;
+  }
+  if (!strcmp(c, "remote auto on")) {
+    setRemoteAutoPermit(true);
+    Serial.println(F("OK"));
+    return;
+  }
+  if (!strcmp(c, "remote auto off")) {
+    setRemoteAutoPermit(false);
+    Serial.println(F("OK"));
     return;
   }
   if (!strcmp(c, "auto") || !strcmp(c, "release")) {
@@ -692,7 +749,10 @@ void drawDisplayPage() {
 
   if (fieldManualMode) snprintf(line, sizeof(line), "MANUAL H:%lu.%lu", (unsigned long)(runtimeSeconds / 3600UL), (unsigned long)((runtimeSeconds / 360UL) % 10UL));
   else if (faultCode != FAULT_NONE) snprintf(line, sizeof(line), "FLT:%s H:%lu.%lu", faultName(faultCode), (unsigned long)(runtimeSeconds / 3600UL), (unsigned long)((runtimeSeconds / 360UL) % 10UL));
-  else snprintf(line, sizeof(line), "%s A:%s H:%lu.%lu", stateName(state), autoOn ? "ON" : "OFF", (unsigned long)(runtimeSeconds / 3600UL), (unsigned long)((runtimeSeconds / 360UL) % 10UL));
+  else {
+    const char* autoLabel = !autoOn ? "OFF" : (remoteAutoPermit ? "ON" : "RMT");
+    snprintf(line, sizeof(line), "%s A:%s H:%lu.%lu", stateName(state), autoLabel, (unsigned long)(runtimeSeconds / 3600UL), (unsigned long)((runtimeSeconds / 360UL) % 10UL));
+  }
   u8g2.drawStr(0, 8, line);
 
   if (engineRunningByRpm()) snprintf(line, sizeof(line), "RPM %u AVG %u", engineRpm, avgRpm10s);
