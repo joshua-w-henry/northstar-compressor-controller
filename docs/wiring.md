@@ -94,12 +94,12 @@ The original clean bench operation used an Optima RedTop. Later tests used a sma
 
 ## ESP32 -> Nano limited control link
 
-Wire the return UART conservatively:
+Use the field-validated return UART wiring:
 
 ```text
 ESP32 GPIO 8 / TX
       |
-     1 kΩ
+    220 Ω
       |
  removable jumper
       |
@@ -107,6 +107,8 @@ Nano D0 / RX
 ```
 
 Keep the existing Nano D1/TX -> divider -> ESP32 RX telemetry path unchanged.
+
+**Why 220 Ω instead of 1 kΩ:** the first build used 1 kΩ and failed to transmit reliably. The Nano onboard USB-serial interface also biases RX0 through its own resistance. With 1 kΩ in the ESP32 return path, the Nano RX node measured about 4.2 V at idle and the ESP32 could not pull the line low enough for valid UART LOW logic. Replacing the series resistor with 220 Ω produced reliable Home Assistant -> MQTT -> ESP32 -> Nano control while keeping current small.
 
 The remote path is intentionally permission-only. `remote auto off` inhibits
 automatic operation; `remote auto on` restores permission, but the Nano still
