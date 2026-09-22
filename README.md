@@ -42,14 +42,19 @@ Mechanical relay outputs retained:
 
 ## Phase 1 plan
 
-After Phase 0 is reliable, add an ESP32 sidecar for monitoring and logging, including:
-- MQTT / Home Assistant
+The ESP32 sidecar provides monitoring/logging plus one deliberately narrow
+control request:
+- MQTT / Home Assistant telemetry
 - pressure history and leak-down monitoring
 - runtime and cycle history
-- larger local display
-- later, carefully limited safety/control requests
+- SD black-box logging
+- read-only SD log pull
+- remote AUTO permit ON/OFF
 
-The Nano remains the real-time controller; the ESP32 is initially an observer/logger.
+The Nano remains the real-time controller. The ESP32 cannot directly command an
+engine start or drive Master, Start/Stop, Unloader, Idle, Kill, or Reset through
+the Home Assistant control path. Remote AUTO is only an additional permission
+gate: the physical AUTO/OFF switch and the Nano state machine remain authoritative.
 
 ## Build
 
