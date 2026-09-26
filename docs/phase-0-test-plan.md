@@ -65,7 +65,7 @@ WAIT
 -> confirm master monitor
 -> unloader ON
 -> 1 s delay
--> Start/Stop pulse 750 ms
+-> Start/Stop pulse 350 ms
 -> detect running by CAN RPM >= 400 or charging-voltage fallback
 -> run unloaded 15 s
 -> unloader OFF
@@ -80,7 +80,7 @@ After start/run reliability is proven, enable pressure auto-stop and verify:
 pressure FULL stable 3 s
 -> unloader ON
 -> wait 8 s
--> Start/Stop pulse 750 ms
+-> Start/Stop pulse 1250 ms
 -> hold Master ON 6 s after pulse ends
 -> Master OFF
 -> WAIT
