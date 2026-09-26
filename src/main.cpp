@@ -40,7 +40,8 @@ const unsigned long PRESSURE_CALL_CONFIRM_MS = 1000;
 const unsigned long PRESSURE_FULL_CONFIRM_MS = 3000;
 const unsigned long MASTER_ON_DELAY_MS = 4000;
 const unsigned long PRECRANK_UNLOAD_MS = 1000;
-unsigned long startPulseMs = 1250;
+unsigned long startPulseMs = 350;
+const unsigned long STOP_BUTTON_PULSE_MS = 1250;
 // OEM engine controller owns its internal retry sequence. The engine manual
 // specifies up to three automatic attempts but does not publish their timing,
 // so allow a generous one-minute envelope after the initial button press.
@@ -239,14 +240,17 @@ void setFault(FaultCode f) {
   enterState(STATE_FAULT);
 }
 
-void beginStartStopPulse() {
+unsigned long activeButtonPulseMs = 0;
+
+void beginStartStopPulse(unsigned long pulseMs) {
+  activeButtonPulseMs = pulseMs;
   startStopPulseActive = true;
   startStopPulseStartedMs = millis();
   Serial.print(F("EV PULSE "));
-  Serial.println(startPulseMs);
+  Serial.println(activeButtonPulseMs);
 }
 void updateStartStopPulse() {
-  if (startStopPulseActive && millis() - startStopPulseStartedMs >= startPulseMs) {
+  if (startStopPulseActive && millis() - startStopPulseStartedMs >= activeButtonPulseMs) {
     startStopPulseActive = false;
     stopPulseEndedMs = millis();
     Serial.println(F("EV PULSE END"));
@@ -486,7 +490,7 @@ void updateStateMachine() {
       if (now - stateEnteredMs >= PRECRANK_UNLOAD_MS) {
         starterActivitySeen = false;
         startConfirmedStartedMs = 0;
-        beginStartStopPulse();
+        beginStartStopPulse(startPulseMs);
         startCount++;
         saveFram();
         enterState(STATE_STARTING);
@@ -545,7 +549,7 @@ void updateStateMachine() {
     case STATE_STOP_UNLOAD:
       if (!running) enterState(STATE_WAITING);
       else if (now - stateEnteredMs >= STOP_UNLOAD_MS) {
-        beginStartStopPulse();
+        beginStartStopPulse(STOP_BUTTON_PULSE_MS);
         enterState(STATE_STOPPING);
       }
       break;
