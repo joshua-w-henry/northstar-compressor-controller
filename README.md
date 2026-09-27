@@ -40,6 +40,12 @@ Mechanical relay outputs retained:
 - A1: Idle dry-contact relay
 - A2: Kill dry-contact relay
 
+Future power-distribution direction:
+- Infineon BTS50015-1TAD smart high-side switches for independently controlled 12 V power branches
+- PhotoMOS / relays retained for true floating dry-contact interfaces
+- ESP32 remains the always-on power supervisor; most other loads may move to switched 12 V branches
+- See `docs/power-architecture.md` for the compressor plan and the reusable ECU/EFI 12 V load strategy
+
 ## Phase 1 plan
 
 The ESP32 sidecar provides monitoring/logging plus one deliberately narrow
