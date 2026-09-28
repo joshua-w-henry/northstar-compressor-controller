@@ -67,3 +67,8 @@ gate: the physical AUTO/OFF switch and the Nano state machine remain authoritati
 This is a PlatformIO project targeting an Arduino Nano ATmega328P.
 
 See `platformio.ini` for dependencies and serial settings.
+
+
+## Backlog priorities
+
+- **P3 — Automatic receiver drain:** add a normally-closed, pressure-rated 12 V drain solenoid at the receiver low point with manual isolation/service capability. Preferred behavior is a brief timed drain after normal compressor shutdown, with a hard maximum-open timeout and optional manual/HA "drain now" command. Candidate final drive method: dedicated BTS50015-1TAD smart high-side channel with current/fault feedback.
