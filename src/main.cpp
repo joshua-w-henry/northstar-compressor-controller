@@ -42,11 +42,14 @@ const unsigned long MASTER_ON_DELAY_MS = 4000;
 const unsigned long PRECRANK_UNLOAD_MS = 1000;
 unsigned long startPulseMs = 350;
 const unsigned long STOP_BUTTON_PULSE_MS = 1250;
-// OEM engine controller owns its internal retry sequence. The engine manual
-// specifies up to three automatic attempts but does not publish their timing,
-// so allow a generous one-minute envelope after the initial button press.
-const unsigned long STARTER_ACTIVITY_TIMEOUT_MS = 5000;
-const unsigned long OEM_START_SEQUENCE_TIMEOUT_MS = 60000;
+// One Start/Stop press hands starting over to the OEM engine controller, which
+// may make up to three crank attempts internally. If that complete sequence
+// does not produce a confirmed run, issue one second Start/Stop command while
+// leaving MASTER energized, giving the engine up to six OEM-managed crank
+// attempts total before declaring START_FAIL.
+const unsigned long STARTER_ACTIVITY_TIMEOUT_MS = 5000;  // diagnostic only
+const unsigned long OEM_START_SEQUENCE_TIMEOUT_MS = 70000;
+const uint8_t MAX_OEM_START_SEQUENCES = 2;
 const unsigned long OEM_RUN_UNLOADED_MS = 15000;
 const unsigned long STOP_UNLOAD_MS = 10000;
 const unsigned long MASTER_OFF_DELAY_MS = 6000;
@@ -146,6 +149,8 @@ unsigned long engineLostStartedMs = 0;
 
 // OEM start-sequence supervision
 bool starterActivitySeen = false;
+bool noCrankReported = false;
+uint8_t oemStartSequence = 0;
 unsigned long startConfirmedStartedMs = 0;
 
 // Automatic pulse
@@ -435,6 +440,8 @@ void releaseControlForAutoOff() {
   stopReason = RELEASE_AUTO;
   startStopPulseActive = false;
   starterActivitySeen = false;
+  noCrankReported = false;
+  oemStartSequence = 0;
   startConfirmedStartedMs = 0;
   if (state != STATE_FAULT) enterState(STATE_WAITING);
 }
@@ -475,6 +482,8 @@ void updateStateMachine() {
     case STATE_WAITING:
       stopReason = STOP_NONE;
       starterActivitySeen = false;
+      noCrankReported = false;
+      oemStartSequence = 0;
       startConfirmedStartedMs = 0;
       if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
       if (pressureCallConfirmed && !forceUnload) enterState(STATE_MASTER_ON_DELAY);
@@ -489,7 +498,10 @@ void updateStateMachine() {
       if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
       if (now - stateEnteredMs >= PRECRANK_UNLOAD_MS) {
         starterActivitySeen = false;
+        noCrankReported = false;
+        oemStartSequence = 1;
         startConfirmedStartedMs = 0;
+        Serial.println(F("EV START SEQUENCE 1/2"));
         beginStartStopPulse(startPulseMs);
         startCount++;
         saveFram();
@@ -524,13 +536,35 @@ void updateStateMachine() {
 
       if (state != STATE_STARTING) break;
 
-      // If the button press never produces even starter-speed RPM, fail fast.
-      // Once cranking has been observed, allow the OEM controller a full minute
-      // to complete its documented three-attempt sequence.
-      if (!starterActivitySeen && now - stateEnteredMs >= STARTER_ACTIVITY_TIMEOUT_MS) {
-        setFault(FAULT_START_FAIL);
-      } else if (starterActivitySeen && now - stateEnteredMs >= OEM_START_SEQUENCE_TIMEOUT_MS) {
-        setFault(FAULT_START_FAIL);
+      // A missed command / no-crank condition is useful diagnostic information,
+      // but it is no longer an immediate fault. The second complete OEM start
+      // sequence is specifically intended to improve cold-start reliability.
+      if (!starterActivitySeen && !noCrankReported &&
+          now - stateEnteredMs >= STARTER_ACTIVITY_TIMEOUT_MS) {
+        noCrankReported = true;
+        Serial.print(F("EV NO CRANK SEQ "));
+        Serial.println(oemStartSequence);
+      }
+
+      // Give each OEM-managed start sequence a full 70-second window. MASTER
+      // remains energized throughout; only the Start/Stop dry-contact command
+      // is pulsed again. Do not count the second command as another compressor
+      // cycle in FRAM.
+      if (now - stateEnteredMs >= OEM_START_SEQUENCE_TIMEOUT_MS) {
+        if (oemStartSequence < MAX_OEM_START_SEQUENCES) {
+          oemStartSequence++;
+          starterActivitySeen = false;
+          noCrankReported = false;
+          startConfirmedStartedMs = 0;
+          Serial.print(F("EV START SEQUENCE "));
+          Serial.print(oemStartSequence);
+          Serial.print('/');
+          Serial.println(MAX_OEM_START_SEQUENCES);
+          beginStartStopPulse(startPulseMs);
+          enterState(STATE_STARTING);  // restart the 70 s supervision window
+        } else {
+          setFault(FAULT_START_FAIL);
+        }
       }
       break;
     }
