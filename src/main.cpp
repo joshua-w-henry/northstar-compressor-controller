@@ -44,7 +44,7 @@ unsigned long startPulseMs = 350;
 const unsigned long STOP_BUTTON_PULSE_MS = 1250;
 // One Start/Stop press hands starting over to the OEM engine controller, which
 // may make up to three crank attempts internally. If that complete sequence
-// does not produce a confirmed run, issue one second Start/Stop command while
+// does not produce a confirmed run, issue a second Start/Stop command while
 // leaving MASTER energized, giving the engine up to six OEM-managed crank
 // attempts total before declaring START_FAIL.
 const unsigned long STARTER_ACTIVITY_TIMEOUT_MS = 5000;  // diagnostic only
