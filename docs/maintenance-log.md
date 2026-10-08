@@ -9,4 +9,6 @@ This file records physical maintenance performed on the NorthStar compressor eng
 - **Hobbs time:** approximately **5.5 hours** (Home Assistant showed **5.57 h** immediately before service)
 - **Milestone:** **First oil change**
 - **Engine history:** Engine was installed brand new; this is its initial break-in oil change.
-- **Notes:** Record oil type/viscosity, quantity, filter/plug observations, and any debris findings here if desired after service.
+- **Oil:** Pennzoil 10W-30
+- **Fill quantity:** just over 1 quart
+- **Notes:** Initial break-in oil change.
