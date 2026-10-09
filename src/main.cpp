@@ -40,8 +40,11 @@ const unsigned long PRESSURE_CALL_CONFIRM_MS = 1000;
 const unsigned long PRESSURE_FULL_CONFIRM_MS = 3000;
 const unsigned long MASTER_ON_DELAY_MS = 4000;
 const unsigned long PRECRANK_UNLOAD_MS = 1000;
-unsigned long startPulseMs = 350;
-const unsigned long STOP_BUTTON_PULSE_MS = 1250;
+// Safety invariant: the OEM Start/Stop dry-contact output must never be
+// intentionally commanded for longer than 350 ms by this firmware.
+const unsigned long MAX_START_STOP_PULSE_MS = 350;
+unsigned long startPulseMs = MAX_START_STOP_PULSE_MS;
+const unsigned long STOP_BUTTON_PULSE_MS = MAX_START_STOP_PULSE_MS;
 // One Start/Stop press hands starting over to the OEM engine controller, which
 // may make up to three crank attempts internally. If that complete sequence
 // does not produce a confirmed run, issue a second Start/Stop command while
@@ -160,7 +163,6 @@ unsigned long startStopPulseStartedMs = 0;
 // Field manual overrides
 bool fieldManualMode = false;
 bool manualMasterOn = false;
-bool manualStartStopOn = false;
 bool manualUnloaderOn = false;
 bool manualIdleOn = false;
 bool manualKillOn = false;
@@ -247,18 +249,26 @@ void setFault(FaultCode f) {
 
 unsigned long activeButtonPulseMs = 0;
 
-void beginStartStopPulse(unsigned long pulseMs) {
-  activeButtonPulseMs = pulseMs;
+void beginStartStopPulse(unsigned long requestedMs) {
+  // Clamp every caller -- automatic start, automatic stop, and manual test --
+  // to the same hard software ceiling.
+  activeButtonPulseMs = requestedMs > MAX_START_STOP_PULSE_MS
+      ? MAX_START_STOP_PULSE_MS
+      : requestedMs;
   startStopPulseActive = true;
   startStopPulseStartedMs = millis();
-  Serial.print(F("EV PULSE "));
+  Serial.print(F("EV PULSE requested="));
+  Serial.print(requestedMs);
+  Serial.print(F(" limited="));
   Serial.println(activeButtonPulseMs);
 }
 void updateStartStopPulse() {
   if (startStopPulseActive && millis() - startStopPulseStartedMs >= activeButtonPulseMs) {
+    const unsigned long actualMs = millis() - startStopPulseStartedMs;
     startStopPulseActive = false;
     stopPulseEndedMs = millis();
-    Serial.println(F("EV PULSE END"));
+    Serial.print(F("EV PULSE END actual="));
+    Serial.println(actualMs);
   }
 }
 
@@ -613,7 +623,9 @@ void applyOutputs() {
   setMosfet(PIN_FAULT_MOSFET, faultBlinkOutputOn());
 
   if (fieldManualMode) {
-    writeOutputs(manualMasterOn, manualStartStopOn,
+    // Manual Start/Stop uses the same bounded pulse path as automatic control;
+    // there is deliberately no latched/manual way to hold D9 high.
+    writeOutputs(manualMasterOn, startStopPulseActive,
                  manualUnloaderOn || emergencyKillActive,
                  manualIdleOn,
                  manualKillOn || emergencyKillActive);
@@ -692,9 +704,16 @@ void printStatus() {
 
 void setManualOutput(char which, bool on) {
   enterFieldManualMode();
+
+  if (which == 's') {
+    if (on) beginStartStopPulse(startPulseMs);
+    else startStopPulseActive = false;
+    Serial.println(F("OK"));
+    return;
+  }
+
   switch (which) {
     case 'm': manualMasterOn = on; break;
-    case 's': manualStartStopOn = on; break;
     case 'u': manualUnloaderOn = on; break;
     case 'i': manualIdleOn = on; break;
     case 'k': manualKillOn = on; break;
@@ -709,7 +728,7 @@ void handleSerialCommand(char* c) {
 
   if (!strcmp(c, "status")) { printStatus(); return; }
   if (!strcmp(c, "help") || !strcmp(c, "?")) {
-    Serial.println(F("master/start/unload/idle/kill on|off; remote auto on|off; set start latch time N; auto; alloff; status"));
+    Serial.println(F("master/unload/idle/kill on|off; start on=pulse; start off=cancel; remote auto on|off; set start latch time 50-350; auto; alloff; status"));
     return;
   }
   if (!strcmp(c, "remote auto on")) {
@@ -724,7 +743,7 @@ void handleSerialCommand(char* c) {
   }
   if (!strcmp(c, "auto") || !strcmp(c, "release")) {
     fieldManualMode = false;
-    manualMasterOn = manualStartStopOn = manualUnloaderOn = manualIdleOn = manualKillOn = false;
+    manualMasterOn = manualUnloaderOn = manualIdleOn = manualKillOn = false;
     startStopPulseActive = false;
     enterState(STATE_WAITING);
     Serial.println(F("AUTO"));
@@ -732,7 +751,8 @@ void handleSerialCommand(char* c) {
   }
   if (!strcmp(c, "alloff") || !strcmp(c, "all off")) {
     enterFieldManualMode();
-    manualMasterOn = manualStartStopOn = manualUnloaderOn = manualIdleOn = manualKillOn = false;
+    manualMasterOn = manualUnloaderOn = manualIdleOn = manualKillOn = false;
+    startStopPulseActive = false;
     Serial.println(F("OK"));
     return;
   }
@@ -740,8 +760,8 @@ void handleSerialCommand(char* c) {
   const char* setp = "set start latch time ";
   if (!strncmp(c, setp, 21)) {
     unsigned long n = strtoul(c + 21, NULL, 10);
-    if (n >= 50 && n <= 10000) { startPulseMs = n; Serial.println(F("OK")); }
-    else Serial.println(F("ERR 50-10000"));
+    if (n >= 50 && n <= MAX_START_STOP_PULSE_MS) { startPulseMs = n; Serial.println(F("OK")); }
+    else Serial.println(F("ERR 50-350"));
     return;
   }
 
