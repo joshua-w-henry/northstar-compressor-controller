@@ -38,7 +38,12 @@ const bool ENABLE_CHARGE_VOLTAGE_RUN_FALLBACK = false;
 // Timings
 const unsigned long PRESSURE_CALL_CONFIRM_MS = 1000;
 const unsigned long PRESSURE_FULL_CONFIRM_MS = 3000;
-const unsigned long MASTER_ON_DELAY_MS = 4000;
+const unsigned long MASTER_ON_DELAY_MS = 4000;  // first EFI prime / CAN temperature sample
+const unsigned long COLD_PRIME_OFF_MS = 1000; // reset ECU between primes
+const unsigned long COLD_PRIME_ON_MS = 3000;  // second and third EFI primes
+const unsigned long ENGINE_TEMP_STALE_MS = 1500;
+// 75 F = 23.889 C; ECU reports 0.1 C resolution. Strictly below 75 F.
+const int16_t COLD_PRIME_THRESHOLD_DECI_C = 239;
 const unsigned long PRECRANK_UNLOAD_MS = 1000;
 // Safety invariant: the OEM Start/Stop dry-contact output must never be
 // intentionally commanded for longer than 350 ms by this firmware.
@@ -95,10 +100,13 @@ const uint16_t FRAM_ADDR_REMOTE_MAGIC = 12;
 const uint16_t FRAM_ADDR_REMOTE_AUTO = 16;
 const uint32_t FRAM_REMOTE_MAGIC = 0x524D5431UL;  // "RMT1"
 const uint32_t RPM_CAN_ID = 0x0C665500UL;
+const uint32_t IAT_CAN_ID = 0x0C665509UL;
+const uint32_t ENGINE_BLOCK_TEMP_CAN_ID = 0x0C66550FUL;
 
 enum State {
-  STATE_WAITING = 0, STATE_MASTER_ON_DELAY, STATE_PRECRANK_UNLOAD,
-  STATE_STARTING, STATE_OEM_RUN, STATE_RUNNING_LOADED,
+  STATE_WAITING = 0, STATE_MASTER_ON_DELAY,
+  STATE_PRIME_OFF_1, STATE_PRIME_ON_2, STATE_PRIME_OFF_2, STATE_PRIME_ON_3,
+  STATE_PRECRANK_UNLOAD, STATE_STARTING, STATE_OEM_RUN, STATE_RUNNING_LOADED,
   STATE_STOP_UNLOAD, STATE_STOPPING, STATE_FAULT
 };
 enum FaultCode {
@@ -133,6 +141,15 @@ float tankPressureFiltered = 0.0;
 bool pressureFilterInitialized = false;
 unsigned long chargeRunStartedMs = 0;
 bool chargeRunConfirmed = false;
+
+// Engine CAN data (direct from ECU; no ESP32/UART dependency).
+// The temperature signals use D4:D5 big-endian: deci-C = raw - 400.
+int16_t blockTempDeciC = 0;
+int16_t iatDeciC = 0;
+bool blockTempValid = false;
+bool iatValid = false;
+unsigned long lastBlockTempFrameMs = 0;
+unsigned long lastIatFrameMs = 0;
 
 // RPM / CAN
 uint16_t engineRpm = 0;
@@ -186,6 +203,10 @@ const char* stateName(State s) {
   switch (s) {
     case STATE_WAITING: return "WAIT";
     case STATE_MASTER_ON_DELAY: return "M-ON";
+    case STATE_PRIME_OFF_1: return "P1OFF";
+    case STATE_PRIME_ON_2: return "P2ON";
+    case STATE_PRIME_OFF_2: return "P2OFF";
+    case STATE_PRIME_ON_3: return "P3ON";
     case STATE_PRECRANK_UNLOAD: return "UNLD";
     case STATE_STARTING: return "STRT";
     case STATE_OEM_RUN: return "OEM";
@@ -380,7 +401,7 @@ void readTankPressure() {
   else tankPressureFiltered = PRESSURE_ALPHA * psi + (1.0 - PRESSURE_ALPHA) * tankPressureFiltered;
 }
 
-void readCanRpm() {
+void readCanTelemetry() {
   struct can_frame frame;
   while (mcp2515.readMessage(&frame) == MCP2515::ERROR_OK) {
     canAnyFrameCount++;
@@ -395,6 +416,22 @@ void readCanRpm() {
       } else {
         canRejectedRpmCount++;
         lastRejectedRpm = r;
+      }
+    } else if (ext && frame.can_dlc >= 6 &&
+               (id == ENGINE_BLOCK_TEMP_CAN_ID || id == IAT_CAN_ID)) {
+      const uint16_t raw = ((uint16_t)frame.data[4] << 8) | frame.data[5];
+      if (raw > 0) {
+        const int32_t deciC = (int32_t)raw - 400;
+        if (id == ENGINE_BLOCK_TEMP_CAN_ID &&
+            deciC >= -400 && deciC <= 2000) {
+          blockTempDeciC = (int16_t)deciC;
+          blockTempValid = true;
+          lastBlockTempFrameMs = millis();
+        } else if (id == IAT_CAN_ID && deciC >= -400 && deciC <= 1500) {
+          iatDeciC = (int16_t)deciC;
+          iatValid = true;
+          lastIatFrameMs = millis();
+        }
       }
     }
   }
@@ -430,7 +467,10 @@ void updateRuntimeCounter() {
   if (!lastRuntimeTickMs) { lastRuntimeTickMs = now; return; }
   if (now - lastRuntimeTickMs >= 1000) {
     lastRuntimeTickMs += 1000;
-    if (engineRunning()) runtimeSeconds++;
+    // A failed OEM crank can briefly reach 400-500 RPM, which satisfies the
+    // diagnostic running detector but not the 800 RPM confirmed-start test.
+    // Do not credit any unconfirmed STARTING time to the Hobbs meter.
+    if (engineRunning() && state != STATE_STARTING) runtimeSeconds++;
   }
   if (now - lastFramSaveMs >= FRAM_SAVE_MS) {
     lastFramSaveMs = now;
@@ -488,6 +528,23 @@ void updateStateMachine() {
   }
   if (state == STATE_FAULT) return;
 
+  // Pre-start power cycling must be immediately cancellable. A pressure
+  // switch opening or force-unload request must never proceed to cranking.
+  const bool prestart = state == STATE_MASTER_ON_DELAY ||
+      state == STATE_PRIME_OFF_1 || state == STATE_PRIME_ON_2 ||
+      state == STATE_PRIME_OFF_2 || state == STATE_PRIME_ON_3 ||
+      state == STATE_PRECRANK_UNLOAD;
+  if (prestart && running) {
+    oemRunStartMs = now;
+    enterState(STATE_OEM_RUN);
+    return;
+  }
+  if (prestart && (!pressureCallRaw || forceUnload)) {
+    Serial.println(F("EV PRIME CANCEL demand"));
+    enterState(STATE_WAITING);
+    return;
+  }
+
   switch (state) {
     case STATE_WAITING:
       stopReason = STOP_NONE;
@@ -500,8 +557,42 @@ void updateStateMachine() {
       break;
 
     case STATE_MASTER_ON_DELAY:
-      if (running) { oemRunStartMs = now; enterState(STATE_OEM_RUN); break; }
-      if (now - stateEnteredMs >= MASTER_ON_DELAY_MS) enterState(STATE_PRECRANK_UNLOAD);
+      if (now - stateEnteredMs >= MASTER_ON_DELAY_MS) {
+        // Read a fresh block temperature after the ECU has powered up.
+        // Missing/stale readings conservatively select three primes.
+        const bool fresh = blockTempValid &&
+            (now - lastBlockTempFrameMs <= ENGINE_TEMP_STALE_MS);
+        Serial.print(F("EV PRIME block_temp_dC="));
+        if (fresh) Serial.print(blockTempDeciC);
+        else Serial.print(F("UNKNOWN"));
+        if (!fresh || blockTempDeciC < COLD_PRIME_THRESHOLD_DECI_C) {
+          Serial.println(F(" count=3"));
+          enterState(STATE_PRIME_OFF_1); // first prime already completed
+        } else {
+          Serial.println(F(" count=1"));
+          enterState(STATE_PRECRANK_UNLOAD);
+        }
+      }
+      break;
+
+    case STATE_PRIME_OFF_1:
+      if (now - stateEnteredMs >= COLD_PRIME_OFF_MS)
+        enterState(STATE_PRIME_ON_2);
+      break;
+
+    case STATE_PRIME_ON_2:
+      if (now - stateEnteredMs >= COLD_PRIME_ON_MS)
+        enterState(STATE_PRIME_OFF_2);
+      break;
+
+    case STATE_PRIME_OFF_2:
+      if (now - stateEnteredMs >= COLD_PRIME_OFF_MS)
+        enterState(STATE_PRIME_ON_3);
+      break;
+
+    case STATE_PRIME_ON_3:
+      if (now - stateEnteredMs >= COLD_PRIME_ON_MS)
+        enterState(STATE_PRECRANK_UNLOAD);
       break;
 
     case STATE_PRECRANK_UNLOAD:
@@ -638,7 +729,15 @@ void applyOutputs() {
 
   switch (state) {
     case STATE_MASTER_ON_DELAY:
+    case STATE_PRIME_ON_2:
+    case STATE_PRIME_ON_3:
       master = true;
+      unload = forceUnload;
+      break;
+    case STATE_PRIME_OFF_1:
+    case STATE_PRIME_OFF_2:
+      // Drop only engine MASTER; Nano, CAN, and safety supervision remain on.
+      master = false;
       unload = forceUnload;
       break;
     case STATE_PRECRANK_UNLOAD:
@@ -875,7 +974,7 @@ void setup() {
 void loop() {
   processSerialConsole();
   updateStartStopPulse();
-  readCanRpm();
+  readCanTelemetry();
   readInputs();
   readBatteryVoltage();
   readTankPressure();
