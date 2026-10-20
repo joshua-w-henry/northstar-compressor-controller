@@ -93,3 +93,31 @@ verified as sufficient to reset the OEM ECU fuel-pump priming logic.
 - `EV ENTER P1OFF`, `P2ON`, `P2OFF`, `P3ON` appear during cold priming.
 - `EV PRIME CANCEL demand` marks a prestart demand/force-unload abort.
 - ESP32 already forwards Nano `EV` lines to MQTT event telemetry.
+
+
+## 2026-10-19 wired deployment and initial field observations
+
+- Nano firmware built successfully using PlatformIO `miniatmega328`:
+  **29,050 / 30,720 bytes flash (94.6%)** and **1,577 / 2,048 bytes
+  static RAM (77.0%)**. These figures leave limited headroom.
+- USB upload initially failed `stk500_getsync` while ESP32 GPIO8/TX
+  remained wired through the series resistor to Nano D0/RX. Removing
+  that jumper enabled successful wired upload; avoid UART contention
+  during future programming.
+- **Warm-start serial observation**: ECU `block_temp_dC=364` (36.4°C,
+  ~97.5°F) and `count=1`; pressure switch changed to CALL at
+  approximately 109.5 PSI; a single 350 ms Start/Stop pulse was logged,
+  START CONFIRMED appeared, no fault was reported, and cycle count
+  advanced 163 -> 164. Engine started cleanly on the first crank.
+- **Cold-start operator observation**: three priming cycles occurred,
+  followed by successful engine start on the **first crank**. No serial
+  monitor was attached for this cold start, so the ECU temperature,
+  firmware `EV PRIME` decision, actual Master ON/OFF durations,
+  Start/Stop pulse timing, and counter/Hobbs behavior were **not
+  independently logged for the cold test**. Do not represent this as
+  a complete bench acceptance pass.
+- Next opportunity with serial monitoring: capture a full genuinely
+  cold `count=3` event with `P1OFF/P2ON/P2OFF/P3ON`, temperature
+  and startup timing; validate actual fuel-pump re-prime behavior
+  after 1 s Master OFF, interlock cancellation, and remaining acceptance
+  items before merging draft PR #1.
